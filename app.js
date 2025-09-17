@@ -3,7 +3,6 @@
 const BASE_URL = "https://script.google.com/macros/s/AKfycbyutPH_sRGPlPUT23fJQnWrIGj60C49R8XU3u7L0FB0HXovBp-xYf2aNZwFBRdOF36Ztg/exec"; // /exec URL
 const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY (or Script Property)
 
-
 /* ---------------- Local storage helpers ---------------- */
 const LS = {
   get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
@@ -22,6 +21,7 @@ const K = {
 
 const el = (id) => document.getElementById(id);
 const gv = (id) => (el(id)?.value || '').trim(); // safe getter for values
+
 
 /* ---------------- Toast ---------------- */
 function ensureToastHost(){

@@ -1,0 +1,392 @@
+:root {
+  --bg:#0b0c10;
+  --fg:#e8e8e8;
+  --muted:#9aa0a6;
+  --brand:#3ddc97;
+  --brand-2:#2fbf85;
+  --brand-3:#1fa772;
+  --card:#17181d;
+  --stroke:#2a2d35;
+  --danger:#ff6b6b;
+  --warning:#ffb347;
+  --ok:#54d77a;
+}
+
+* { box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body { height:100%; }
+body {
+  margin:0;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  background:var(--bg);
+  color:var(--fg);
+  line-height:1.35;
+}
+
+header {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:12px 16px;
+  background:#12131a;
+  border-bottom:1px solid var(--stroke);
+}
+
+.chip {
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  color:var(--muted);
+  padding:4px 8px;
+  border:1px solid var(--stroke);
+  border-radius:999px;
+  background:var(--card);
+}
+
+main {
+  padding:16px;
+  max-width:880px;
+  margin:0 auto;
+}
+
+label {
+  display:block;
+  margin:10px 0;
+}
+
+input,
+select,
+button,
+textarea {
+  width:100%;
+  padding:12px;
+  min-height:44px; /* touch target */
+  border-radius:10px;
+  border:1px solid var(--stroke);
+  background:var(--card);
+  color:var(--fg);
+  outline:none;
+  transition: border-color .15s ease, background-color .15s ease, transform .02s ease;
+}
+
+input::placeholder,
+textarea::placeholder { color:var(--muted); }
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 25%, transparent);
+}
+
+select:disabled,
+input:disabled,
+button:disabled {
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+button {
+  background:var(--brand);
+  color:#08140f;
+  border:none;
+  font-weight:700;
+  cursor:pointer;
+}
+button:hover { background:var(--brand-2); }
+button:active { transform: translateY(1px); background:var(--brand-3); }
+
+button.small {
+  padding:6px 10px;
+  font-size:12px;
+  font-weight:600;
+  border-radius:8px;
+}
+
+/* Layout */
+.row { display:block; }
+
+@media (min-width:680px) {
+  .row { display:flex; gap:12px; }
+  .row > label { flex:1; }
+}
+
+.muted { color:var(--muted); }
+.small { font-size:12px; }
+.hidden { display:none !important; }
+
+.card {
+  border:1px solid var(--stroke);
+  background:var(--card);
+  border-radius:12px;
+  padding:12px;
+  margin:12px 0;
+}
+
+.split {
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:10px;
+  align-items:center;
+}
+
+.inline {
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap; /* mobile friendly */
+}
+
+/* Recent list */
+#recent {
+  list-style:none;
+  margin:0;
+  padding:0;
+}
+#recent li {
+  padding:8px 10px;
+  border:1px solid var(--stroke);
+  background:var(--card);
+  border-radius:10px;
+  margin:8px 0;
+}
+
+/* Messages */
+.msg { color:#ffb4a4; margin-top:6px; }
+
+/* Footer */
+footer {
+  padding:16px;
+  text-align:center;
+  color:var(--muted);
+}
+
+/* ---------- Multi-Entry Table ---------- */
+#bulkWrap { overflow-x:auto; }
+
+#bulkTable {
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0;
+  border:1px solid var(--stroke);
+  border-radius:12px;
+  overflow:hidden;
+  min-width:640px; /* allow horizontal scroll on tiny screens */
+}
+
+#bulkTable thead th {
+  font-weight:700;
+  font-size:12px;
+  letter-spacing:.02em;
+  text-transform:uppercase;
+  color:var(--muted);
+  background:#13141a;
+  border-bottom:1px solid var(--stroke);
+}
+
+#bulkTable th,
+#bulkTable td {
+  padding:8px;
+  vertical-align:middle;
+  min-width:104px; /* keep columns readable */
+}
+#bulkTable td.qty { min-width:80px; }
+
+#bulkTable tbody tr + tr td { border-top:1px solid var(--stroke); }
+
+#bulkTable input[list],
+#bulkTable select,
+#bulkTable input[type="number"] {
+  width:100%;
+  padding:10px;
+  border-radius:8px;
+  border:1px solid var(--stroke);
+  background:#121319;
+  color:var(--fg);
+}
+
+#bulkTable button[data-action="remove"] {
+  width:auto;
+  background:transparent;
+  color:var(--muted);
+  border:1px solid var(--stroke);
+  padding:8px 10px;
+  border-radius:8px;
+}
+#bulkTable button[data-action="remove"]:hover {
+  color:var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--stroke));
+}
+
+/* Number input tweaks */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
+
+/* ---------- Count Mode ---------- */
+#countTable {
+  width:100%;
+  border:1px solid var(--stroke);
+  border-radius:12px;
+  overflow:hidden;
+  border-collapse:separate;
+  border-spacing:0;
+}
+
+#countTable thead th {
+  font-size:12px;
+  text-transform:uppercase;
+  color:var(--muted);
+  background:#13141a;
+  border-bottom:1px solid var(--stroke);
+  padding:8px;
+}
+
+#countTable td { padding:8px; }
+#countTable tbody tr + tr td { border-top:1px solid var(--stroke); }
+
+#countTable input[type="number"] {
+  background:#121319;
+  border:1px solid var(--stroke);
+  border-radius:8px;
+  padding:8px 10px;
+  width:120px;
+  text-align:right;
+}
+
+/* ---------- History ---------- */
+#historyList ul { list-style:none; padding:0; margin:0; }
+#historyList li {
+  padding:10px;
+  border:1px solid var(--stroke);
+  border-radius:10px;
+  background:var(--card);
+  margin:8px 0;
+}
+#historyList li .inline button[data-void] {
+  background:transparent;
+  border:1px solid var(--stroke);
+  color:var(--muted);
+}
+#historyList li .inline button[data-void]:hover {
+  color:#fff;
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--stroke));
+  background: rgba(255, 107, 107, .12);
+}
+#historyList li .inline button[data-edit] {
+  background:transparent;
+  border:1px solid var(--stroke);
+  color:var(--muted);
+}
+#historyList li .inline button[data-edit]:hover {
+  color:#fff;
+  border-color: color-mix(in srgb, var(--brand) 60%, var(--stroke));
+  background: rgba(61, 220, 151, .12);
+}
+
+/* ---------- Toast ---------- */
+.toast {
+  position:fixed;
+  left:50%;
+  bottom:16px;
+  transform:translateX(-50%) translateY(24px);
+  background:#0f1116;
+  color:#e8e8e8;
+  border:1px solid var(--stroke);
+  border-radius:12px;
+  padding:12px 14px;
+  min-width:220px;
+  max-width:90vw;
+  text-align:center;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  opacity:0;
+  pointer-events:none;
+  transition: opacity .18s ease, transform .18s ease;
+  z-index:9999;
+}
+.toast.show {
+  opacity:1;
+  transform:translateX(-50%) translateY(0);
+  pointer-events:auto;
+}
+
+/* ---------- Utility states ---------- */
+.badge-ok    { color:var(--ok); }
+.badge-warn  { color:var(--warning); }
+.badge-err   { color:var(--danger); }
+
+/* Compact buttons inside tool headers */
+.card .inline > button {
+  width:auto;
+  min-width:112px;
+}
+
+/* Make Close buttons look secondary */
+#btnCloseCount,
+#historyClose,
+#btnCloseBackorder {
+  background:transparent;
+  color:var(--muted);
+  border:1px solid var(--stroke);
+}
+#btnCloseCount:hover,
+#historyClose:hover,
+#btnCloseBackorder:hover {
+  color:#fff;
+  border-color: var(--brand);
+}
+
+/* Improve touch targets on mobile */
+@media (max-width:480px){
+  .card { padding:10px; }
+  header { padding:10px 12px; }
+  .split { grid-template-columns:1fr; gap:8px; }
+  .card .inline > button { min-width:unset; flex:1 1 auto; }
+  #bulkTable { min-width:580px; } /* still scrolls inside #bulkWrap */
+}
+
+/* Smooth scrolling for long history */
+html { scroll-behavior:smooth; }
+
+/* ---------- Sliding Panels ---------- */
+#panelCount,
+#panelBackorder,
+#panelHistory {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(-8px);
+  transition: max-height .35s ease, opacity .25s ease, transform .35s ease;
+}
+
+/* visible state */
+#panelCount.show,
+#panelBackorder.show,
+#panelHistory.show {
+  max-height: 1200px; /* enough to fit contents */
+  opacity: 1;
+  transform: translateY(0);
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+/* hide with smooth collapse */
+#panelCount.hidden,
+#panelBackorder.hidden,
+#panelHistory.hidden {
+  max-height: 0 !important;
+  opacity: 0 !important;
+  margin: 0 !important;
+  transform: translateY(-8px);
+}
+
+/* Keep card styling when expanded */
+#panelCount,
+#panelBackorder,
+#panelHistory {
+  border:1px solid var(--stroke);
+  background:var(--card);
+  border-radius:12px;
+  padding:12px;
+}

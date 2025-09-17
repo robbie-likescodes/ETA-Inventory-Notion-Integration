@@ -61,7 +61,7 @@ button,
 textarea {
   width:100%;
   padding:12px;
-  min-height:44px; /* touch target */
+  min-height:44px;
   border-radius:10px;
   border:1px solid var(--stroke);
   background:var(--card);
@@ -264,7 +264,8 @@ input[type="number"] { -moz-appearance: textfield; }
   background:var(--card);
   margin:8px 0;
 }
-#historyList li .inline button[data-void] {
+#historyList li .inline button[data-void],
+#historyList li .inline button[data-edit] {
   background:transparent;
   border:1px solid var(--stroke);
   color:var(--muted);
@@ -273,11 +274,6 @@ input[type="number"] { -moz-appearance: textfield; }
   color:#fff;
   border-color: color-mix(in srgb, var(--danger) 60%, var(--stroke));
   background: rgba(255, 107, 107, .12);
-}
-#historyList li .inline button[data-edit] {
-  background:transparent;
-  border:1px solid var(--stroke);
-  color:var(--muted);
 }
 #historyList li .inline button[data-edit]:hover {
   color:#fff;
@@ -343,7 +339,7 @@ input[type="number"] { -moz-appearance: textfield; }
   header { padding:10px 12px; }
   .split { grid-template-columns:1fr; gap:8px; }
   .card .inline > button { min-width:unset; flex:1 1 auto; }
-  #bulkTable { min-width:580px; } /* still scrolls inside #bulkWrap */
+  #bulkTable { min-width:580px; }
 }
 
 /* Smooth scrolling for long history */
@@ -364,7 +360,7 @@ html { scroll-behavior:smooth; }
 #panelCount.show,
 #panelBackorder.show,
 #panelHistory.show {
-  max-height: 1200px; /* enough to fit contents */
+  max-height: 1200px;
   opacity: 1;
   transform: translateY(0);
   margin-top: 12px;
@@ -389,4 +385,25 @@ html { scroll-behavior:smooth; }
   background:var(--card);
   border-radius:12px;
   padding:12px;
+}
+
+/* ---------- Notion Task Card ---------- */
+#taskCard {
+  border:1px solid var(--stroke);
+  border-radius:12px;
+  background:#14151b;
+  padding:12px;
+}
+#taskCard strong {
+  font-size:14px;
+}
+#taskCard .small.muted {
+  font-weight:500;
+}
+#taskCard a {
+  text-decoration:none;
+  color:var(--brand);
+}
+#taskCard a:hover {
+  text-decoration:underline;
 }

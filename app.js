@@ -1,6 +1,11 @@
-/*************** FIXED CONNECTION (update if you redeploy) ***************/
-const BASE_URL = "https://script.google.com/macros/s/AKfycbzRiTdCtzOiVnBT9nXjfqAZqt_ptiWfSZGA0oR70KxzB4boTPatUlySbi-ttU1yX3Xfyg/exec"; // Apps Script /exec
-const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY
+/*************** FIXED CONNECTIONS (update if you redeploy) ***************/
+// Inventory API (Apps Script #1)
+const BASE_URL = "https://script.google.com/macros/s/AKfycbzRiTdCtzOiVnBT9nXjfqAZqt_ptiWfSZGA0oR70KxzB4boTPatUlySbi-ttU1yX3Xfyg/exec"; // /exec URL
+const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY (or Script Property)
+
+// Notion Proxy (Apps Script #2)
+const NOTION_URL     = "PASTE_YOUR_NOTION_PROXY_EXEC_URL_HERE"; // e.g. https://script.google.com/macros/s/XXX/exec
+const NOTION_API_KEY = API_KEY; // can be different; must match the proxy’s Script Property
 /***********************************************************************/
 
 /* ---------------- Local storage helpers ---------------- */
@@ -59,7 +64,7 @@ function setNet() { el('net').textContent = navigator.onLine ? 'online' : 'offli
 window.addEventListener('online', () => { setNet(); flushQueue(); });
 window.addEventListener('offline', setNet);
 
-/* ---------------- API helpers ---------------- */
+/* ---------------- API helpers (Inventory) ---------------- */
 async function apiGET(route, params = {}) {
   const qs = new URLSearchParams({ route, ...params }).toString();
   const r = await fetch(`${BASE_URL}?${qs}`);
@@ -337,6 +342,36 @@ function confirmDelete(whenStr){
   return confirm(`This was completed on ${whenStr || 'this date'}. Are you sure you want to delete (void) this submission?`);
 }
 
+/* ===================== Notion Proxy Helpers ===================== */
+// Keep these globally accessible for the HTML inline script
+async function notionPOST(bodyObj) {
+  if (!NOTION_URL || NOTION_URL.startsWith('PASTE_')) {
+    throw new Error('NOTION_URL is not configured.');
+  }
+  const res = await fetch(NOTION_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: NOTION_API_KEY, ...bodyObj })
+  });
+  const j = await res.json();
+  if (!j || j.ok === false) throw new Error(j && j.error || 'Notion proxy error');
+  return j;
+}
+
+// Lookup a task by Job Code (v2025-09-03 via data source query)
+async function notionLookupByJobCode(jobCode) {
+  return await notionPOST({ action: 'lookupTask', jobCode });
+}
+
+// Mark Parts Status -> "Parts Logged" (or override)
+async function notionMarkPartsLogged(jobCode, partsStatus='Parts Logged') {
+  return await notionPOST({ action: 'logParts', jobCode, partsStatus });
+}
+
+// Export to window for the small inline script in index.html
+window.notionLookupByJobCode = notionLookupByJobCode;
+window.notionMarkPartsLogged = notionMarkPartsLogged;
+
 /* ---------------- Boot ---------------- */
 window.addEventListener('DOMContentLoaded', async () => {
   setNet();
@@ -486,9 +521,41 @@ window.addEventListener('DOMContentLoaded', async () => {
         enforceRowAction(el('bulkTable').querySelector('tbody tr:last-child'));
       }
       if (el('note')) el('note').value = '';
+
+      // Refresh datalists
       await flushQueue();
       await loadParts();
       await loadCats();
+
+      // === Notion: auto-mark Parts Logged when a Job Code is present ===
+      const code = jobCode;
+      if (code) {
+        try {
+          const mark = await notionMarkPartsLogged(code);
+          if (mark && mark.ok) {
+            toast('Notion: Parts Status → Parts Logged');
+            // If the task card is visible, refresh it
+            const card = el('taskCard');
+            if (card && card.style.display !== 'none') {
+              const res = await notionLookupByJobCode(code);
+              if (res && res.found && res.task) {
+                // Mirror the card update logic from index.html helper
+                const t = res.task;
+                el('taskName').textContent = t.name || '(Untitled)';
+                el('taskOpen').href = t.url || '#';
+                el('taskJobCode').textContent = t.jobCode || '—';
+                el('taskPartsStatus').textContent = t.partsStatus || '—';
+                el('taskDue').textContent = t.due ? new Date(t.due).toLocaleDateString() : '—';
+                card.style.display = 'block';
+              }
+            }
+          }
+        } catch (e) {
+          // Don’t block the inventory flow if Notion update fails
+          console.warn('Notion mark failed:', e);
+          toast('Notion update skipped (check proxy)');
+        }
+      }
     }catch(e){
       alert('Bulk submit failed: '+e.message);
     }finally{
@@ -579,7 +646,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   /* ======================= TOOLS: HISTORY ======================= */
   // Open History panel
   el('btnHistory')?.addEventListener('click', async ()=>{
-    openPanel('panelHistory');               // FIX: matches HTML id
+    openPanel('panelHistory');
     await loadTechs();
     showHistFields(gv('histFilter') || 'tech');
   });

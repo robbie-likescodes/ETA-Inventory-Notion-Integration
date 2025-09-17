@@ -1,12 +1,8 @@
 /*************** FIXED CONNECTIONS (update if you redeploy) ***************/
 // Inventory API (Apps Script #1)
-const BASE_URL = "https://script.google.com/macros/s/AKfycbw1775BMtHG0SDiGvl-q1L1xo-kdhA8zPjh8QskXgtTXIP-l2NK7DFJ4G23mn3VIf8t2A/exec"; // /exec URL
+const BASE_URL = "https://script.google.com/macros/s/AKfycbyutPH_sRGPlPUT23fJQnWrIGj60C49R8XU3u7L0FB0HXovBp-xYf2aNZwFBRdOF36Ztg/exec"; // /exec URL
 const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY (or Script Property)
 
-// Notion Proxy (Apps Script #2)
-const NOTION_URL     = "PASTE_YOUR_NOTION_PROXY_EXEC_URL_HERE"; // e.g. https://script.google.com/macros/s/XXX/exec
-const NOTION_API_KEY = API_KEY; // can be different; must match the proxy’s Script Property
-/***********************************************************************/
 
 /* ---------------- Local storage helpers ---------------- */
 const LS = {

@@ -27,16 +27,50 @@
 
     <!-- App -->
     <section id="app" class="hidden">
-      <!-- Identity -->
+      <!-- Identity / Job -->
       <section class="card">
         <div class="row">
-          <label>Job Code (optional)
+          <label>Job Code
             <input id="jobCode" placeholder="e.g. ETA-509" />
           </label>
           <label>Technician
             <input id="tech" placeholder="Your name" />
           </label>
         </div>
+
+        <!-- Notion: quick actions -->
+        <div class="split" style="margin-top:6px">
+          <div class="small muted">
+            Use Job Code to fetch the task from Notion and update Parts Status after submitting parts.
+          </div>
+          <div class="inline">
+            <button id="btnLookupTask" type="button">Lookup Task in Notion</button>
+            <button id="btnMarkLogged" type="button" class="small">Mark Parts Logged</button>
+          </div>
+        </div>
+
+        <!-- Notion Task Card (populated by app.js) -->
+        <div id="taskCard" class="card" style="margin-top:10px; display:none">
+          <div class="split">
+            <strong id="taskName">(Task)</strong>
+            <a id="taskOpen" href="#" target="_blank" rel="noopener" class="small muted">Open in Notion ↗</a>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <div style="flex:1">
+              <div class="small muted">Job Code</div>
+              <div id="taskJobCode">—</div>
+            </div>
+            <div style="flex:1">
+              <div class="small muted">Parts Status</div>
+              <div id="taskPartsStatus">—</div>
+            </div>
+            <div style="flex:1">
+              <div class="small muted">Due</div>
+              <div id="taskDue">—</div>
+            </div>
+          </div>
+        </div>
+
         <div class="small muted" id="sync">Sync: idle</div>
       </section>
 
@@ -215,7 +249,7 @@
   </main>
 
   <footer>
-    <small>v1 • <span id="statusChip">Ready</span></small>
+    <small>v2 • <span id="statusChip">Ready</span></small>
   </footer>
 
   <!-- Global datalists -->
@@ -226,5 +260,60 @@
   <div class="toast" role="status" aria-live="polite"></div>
 
   <script src="app.js"></script>
+  <script>
+    // Minimal glue so the Notion buttons work with your existing app.js helpers.
+    // Assumes app.js defines: notionLookupByJobCode(jobCode) and notionMarkPartsLogged(jobCode, status?)
+    (function(){
+      function showTaskCard(task){
+        const card = document.getElementById('taskCard');
+        if (!task){ card.style.display='none'; return; }
+        document.getElementById('taskName').textContent = task.name || '(Untitled)';
+        document.getElementById('taskOpen').href = task.url || '#';
+        document.getElementById('taskJobCode').textContent = task.jobCode || '—';
+        document.getElementById('taskPartsStatus').textContent = task.partsStatus || '—';
+        document.getElementById('taskDue').textContent = task.due ? new Date(task.due).toLocaleDateString() : '—';
+        card.style.display = 'block';
+      }
+
+      const btnLookup = document.getElementById('btnLookupTask');
+      const btnLogged = document.getElementById('btnMarkLogged');
+
+      btnLookup && btnLookup.addEventListener('click', async ()=>{
+        const code = (document.getElementById('jobCode').value || '').trim();
+        if (!code){ alert('Enter a Job Code first.'); return; }
+        try{
+          const res = await (window.notionLookupByJobCode ? window.notionLookupByJobCode(code) : Promise.reject('Notion helper missing'));
+          if (res && res.found && res.task){
+            showTaskCard(res.task);
+            if (window.toast) toast('Task loaded from Notion');
+          }else{
+            showTaskCard(null);
+            if (window.toast) toast('No task found for that Job Code');
+          }
+        }catch(e){
+          showTaskCard(null);
+          alert('Lookup failed: ' + (e && e.message || e));
+        }
+      });
+
+      btnLogged && btnLogged.addEventListener('click', async ()=>{
+        const code = (document.getElementById('jobCode').value || '').trim();
+        if (!code){ alert('Enter a Job Code first.'); return; }
+        try{
+          const res = await (window.notionMarkPartsLogged ? window.notionMarkPartsLogged(code) : Promise.reject('Notion helper missing'));
+          if (res && res.ok){
+            if (window.toast) toast('Parts Status updated in Notion');
+            // refresh card to show new status
+            const again = await (window.notionLookupByJobCode ? window.notionLookupByJobCode(code) : null);
+            if (again && again.task) showTaskCard(again.task);
+          }else{
+            alert('Update failed: ' + (res && res.error || 'unknown'));
+          }
+        }catch(e){
+          alert('Update failed: ' + (e && e.message || e));
+        }
+      });
+    })();
+  </script>
 </body>
 </html>

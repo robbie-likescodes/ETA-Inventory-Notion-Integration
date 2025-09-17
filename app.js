@@ -1,6 +1,6 @@
 /*************** FIXED CONNECTIONS (update if you redeploy) ***************/
 // Inventory API (Apps Script #1)
-const BASE_URL = "https://script.google.com/macros/s/AKfycbyutPH_sRGPlPUT23fJQnWrIGj60C49R8XU3u7L0FB0HXovBp-xYf2aNZwFBRdOF36Ztg/exec"; // /exec URL
+const BASE_URL = "https://script.google.com/macros/s/AKfycbw06q7gwYoAeoDrNPYoRV72LxVzXP0un4S_YL9fEdhcTv_-F6qnP4nTtTTEUyt5_GLY/exec"; // /exec URL
 const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY (or Script Property)
 
 /* ---------------- Local storage helpers ---------------- */

@@ -1,8 +1,12 @@
 /**************** FIXED CONNECTIONS (update if you redeploy) ****************/
-// Inventory API (Apps Script /exec #1)
-const BASE_URL = "https://script.google.com/macros/s/AKfycbwOQLFY_CwEjnRaxWG1kbelhpI7gGEiBK-1QWGk0bIVM-YZb1wqk8sTjPa6Zn4mFhbf/exec"; // /exec URL
+// Inventory API (Apps Script /exec)
+const BASE_URL = "https://script.google.com/macros/s/AKfycbwOQLFY_CwEjnRaxWG1kbelhpI7gGEiBK-1QWGk0bIVM-YZb1wqk8sTjPa6Zn4mFhbf/exec";
 const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY (or Script Properties)
 /***************************************************************************/
+
+// expose for inline helpers (if any)
+window.API_URL = BASE_URL;
+window.API_KEY = API_KEY;
 
 /* ---------------- Local storage helpers ---------------- */
 const LS = {
@@ -13,11 +17,12 @@ const LS = {
 const K = {
   pin: 'inv.pin',
   tech: 'inv.tech',
-  company: 'inv.company', // Category in Sheets; keep key for compat
+  company: 'inv.company',
   queue: 'inv.queue',
   parts: 'inv.parts',
   cats:  'inv.cats',
   locs: 'inv.locs',
+  jobs: 'inv.jobs.cache' // {options:[{id,title,client,status}], ts:number}
 };
 
 const el = (id) => document.getElementById(id);
@@ -318,12 +323,58 @@ function renderHistory(items){
 function confirmChange(whenStr){ return confirm(`This was completed on ${whenStr || 'this date'}. Change your submission?`); }
 function confirmDelete(whenStr){ return confirm(`This was completed on ${whenStr || 'this date'}. Delete (void) this submission?`); }
 
-/* ---------------- Notion helpers (via proxy) ---------------- */
+/* ---------------- Notion helpers (proxy) ---------------- */
 async function notionLookupByJobCode(jobCode){
   return apiPOST({ action:'lookupTask', jobCode });
 }
-async function notionMarkPartsLogged(jobCode, desired='Parts Logged'){
+async function notionMarkPartsLoggedByCode(jobCode, desired='Parts Logged'){
   return apiPOST({ action:'logParts', jobCode, partsStatus: desired });
+}
+async function notionMarkPartsLoggedByPage(pageId, desired='Parts Logged'){
+  return apiPOST({ kind:'mark_parts', pageId, partsStatus: desired });
+}
+
+/* ---------------- Job picker (Notion) ---------------- */
+function fillJobsDatalist(options){
+  const dl = el('jobsList'); if (!dl) return;
+  dl.innerHTML = '';
+  (options||[]).forEach(job => {
+    const opt = document.createElement('option');
+    opt.value = job.title || '(Untitled)';
+    opt.dataset.id = job.id;
+    opt.label = [job.client, job.status].filter(Boolean).join(' • ');
+    dl.appendChild(opt);
+  });
+}
+async function refreshJobsDatalist(q=''){
+  try{
+    const j = await apiGET('jobs', { q, limit: 100 });
+    const options = j.jobs || [];
+    LS.set(K.jobs, { options, ts: Date.now() });
+    fillJobsDatalist(options);
+  }catch(e){
+    // use cache if present
+    const cache = LS.get(K.jobs, null);
+    if (cache?.options) fillJobsDatalist(cache.options);
+  }
+}
+function resolveSelectedJobId(){
+  const input = el('jobSearch'); const list = el('jobsList'); if (!input || !list) return '';
+  const match = Array.from(list.options).find(o => o.value === input.value);
+  return match ? (match.dataset.id || '') : '';
+}
+function showJobCard(job){
+  const card = el('taskCard');
+  if (!job){ if (card) card.style.display = 'none'; return; }
+  el('taskName')?.textContent = job.title || job.name || '(Untitled)';
+  if (el('taskOpen')) el('taskOpen').href = job.url || '#';
+  el('taskJobCode')?.textContent = job.jobCode || '—';
+  el('taskPartsStatus')?.textContent = job.partsStatus || '—';
+  el('taskDue')?.textContent = job.due ? new Date(job.due).toLocaleDateString() : '—';
+  el('jobClient')?.textContent = job.client || '—';
+  el('jobAddress')?.textContent = job.address || '—';
+  el('jobStatus')?.textContent = job.status || '—';
+  if (card) card.style.display = 'block';
 }
 
 /* ---------------- Boot ---------------- */
@@ -360,6 +411,21 @@ window.addEventListener('DOMContentLoaded', async () => {
   await loadLocs();
   await loadParts();
   await loadCats();
+
+  // ---- Job picker wiring ----
+  const jobInput = el('jobSearch');
+  const jobPageId = el('jobPageId');
+  jobInput?.addEventListener('input', () => refreshJobsDatalist(jobInput.value.trim()));
+  jobInput?.addEventListener('focus', () => refreshJobsDatalist(jobInput.value.trim()));
+  jobInput?.addEventListener('change', async ()=>{
+    const id = resolveSelectedJobId();
+    jobPageId.value = id || '';
+    if (!id) return;
+    try{
+      const j = await apiGET('job', { id });
+      if (j.ok && j.job) showJobCard(j.job);
+    }catch(e){ /* ignored (toast handled elsewhere) */ }
+  });
 
   // Seed one empty bulk row
   el('bulkTable')?.querySelector('tbody')?.insertAdjacentHTML('beforeend', bulkRowHtml());
@@ -414,7 +480,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (!rows.length){ alert('Add at least one line.'); return; }
 
     const defaultCat = gv('company');
-    const jobCode = gv('jobCode');
+    const jobCode = gv('jobCode'); // legacy; harmless if blank
     const note = gv('note');
 
     const items = rows.map(tr=>{
@@ -438,11 +504,11 @@ window.addEventListener('DOMContentLoaded', async () => {
       return {
         company,
         tech,
-        action, // already canonical
+        action,
         partId: (get('partId')||'').trim(),
         qty: String(parseFloat(get('qty')||'0')||0),
         fromLoc, toLoc,
-        jobCode,
+        jobCode, // optional
         note,
         requestId: (crypto.randomUUID ? crypto.randomUUID() : 'r-'+Date.now()+Math.random().toString(16).slice(2))
       };
@@ -624,40 +690,65 @@ window.addEventListener('DOMContentLoaded', async () => {
   const btnLookup = el('btnLookupTask');
   const btnLogged = el('btnMarkLogged');
 
+  // Refresh job (prefer selected pageId; fall back to legacy job code)
   btnLookup && btnLookup.addEventListener('click', async ()=>{
+    const pageId = (el('jobPageId')?.value || '').trim();
     const code = gv('jobCode');
-    if (!code){ alert('Enter a Job Code first.'); return; }
+
     try{
-      const res = await notionLookupByJobCode(code);
-      if (res && res.ok && res.found && res.task){
-        const t = res.task;
-        el('taskName').textContent = t.name || '(Untitled)';
-        el('taskOpen').href = t.url || '#';
-        el('taskJobCode').textContent = t.jobCode || code;
-        el('taskPartsStatus').textContent = t.partsStatus || '—';
-        el('taskDue').textContent = t.due ? new Date(t.due).toLocaleDateString() : '—';
-        el('taskCard').style.display = 'block';
-        toast('Task loaded from Notion');
-      } else {
-        el('taskCard').style.display = 'none';
-        toast('No task found for that Job Code');
+      if (pageId){
+        const j = await apiGET('job', { id: pageId });
+        if (j.ok && j.job){ showJobCard(j.job); toast('Job loaded from Notion'); }
+        else { toast('No job found'); }
+        return;
       }
+      if (code){
+        const res = await notionLookupByJobCode(code);
+        if (res?.ok && res.found && res.task){
+          const t = res.task;
+          showJobCard({
+            title: t.name, url: t.url, jobCode: t.jobCode,
+            partsStatus: t.partsStatus, due: t.due
+          });
+          toast('Task loaded from Notion');
+        } else {
+          el('taskCard').style.display = 'none';
+          toast('No task found for that Job Code');
+        }
+        return;
+      }
+      alert('Pick a Job or enter a Job Code first.');
     }catch(e){
       alert('Lookup failed: ' + (e?.message || e));
     }
   });
 
+  // Mark parts logged (prefer pageId; fallback to legacy job code)
   btnLogged && btnLogged.addEventListener('click', async ()=>{
+    const pageId = (el('jobPageId')?.value || '').trim();
     const code = gv('jobCode');
-    if (!code){ alert('Enter a Job Code first.'); return; }
+
     try{
-      const res = await notionMarkPartsLogged(code, 'Parts Logged');
+      let res;
+      if (pageId){
+        res = await notionMarkPartsLoggedByPage(pageId, 'Parts Logged');
+      } else if (code){
+        res = await notionMarkPartsLoggedByCode(code, 'Parts Logged');
+      } else {
+        alert('Pick a Job (or enter a Job Code) first.'); return;
+      }
       if (res && res.ok){
         toast('Parts Status updated in Notion');
-        const again = await notionLookupByJobCode(code);
-        if (again?.task){
-          el('taskPartsStatus').textContent = again.task.partsStatus || 'Parts Logged';
-          el('taskCard').style.display = 'block';
+        // refresh the card
+        if (pageId){
+          const j = await apiGET('job', { id: pageId });
+          if (j.ok && j.job) showJobCard(j.job);
+        } else if (code){
+          const again = await notionLookupByJobCode(code);
+          if (again?.task) showJobCard({
+            title: again.task.name, url: again.task.url, jobCode: again.task.jobCode,
+            partsStatus: again.task.partsStatus, due: again.task.due
+          });
         }
       } else {
         alert('Update failed: ' + (res?.error || 'unknown'));

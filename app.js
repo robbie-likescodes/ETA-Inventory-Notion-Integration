@@ -1,7 +1,8 @@
-/*************** FIXED CONNECTIONS (update if you redeploy) ***************/
-// Inventory API (Apps Script #1)
-const BASE_URL = "https://script.google.com/macros/s/AKfycbw06q7gwYoAeoDrNPYoRV72LxVzXP0un4S_YL9fEdhcTv_-F6qnP4nTtTTEUyt5_GLY/exec"; // /exec URL
-const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY (or Script Property)
+/**************** FIXED CONNECTIONS (update if you redeploy) ****************/
+// Inventory API (Apps Script /exec #1)
+const BASE_URL = "https://script.google.com/macros/s/AKfycbyutPH_sRGPlPUT23fJQnWrIGj60C49R8XU3u7L0FB0HXovBp-xYf2aNZwFBRdOF36Ztg/exec"; // /exec URL
+const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY (or Script Properties)
+/***************************************************************************/
 
 /* ---------------- Local storage helpers ---------------- */
 const LS = {
@@ -20,8 +21,7 @@ const K = {
 };
 
 const el = (id) => document.getElementById(id);
-const gv = (id) => (el(id)?.value || '').trim(); // safe getter for values
-
+const gv = (id) => (el(id)?.value || '').trim();
 
 /* ---------------- Toast ---------------- */
 function ensureToastHost(){
@@ -41,7 +41,7 @@ function toast(msg, ms=2200){
   t._hide = setTimeout(()=> t.classList.remove('show'), ms);
 }
 
-/* ---------------- Panel helpers (slide open/close) ---------------- */
+/* ---------------- Panels ---------------- */
 function openPanel(id){
   const p = el(id); if (!p) return;
   p.classList.add('show');
@@ -51,16 +51,15 @@ function openPanel(id){
 function closePanel(id){
   const p = el(id); if (!p) return;
   p.classList.remove('show');
-  // keep .hidden for initial render compatibility
   p.classList.add('hidden');
 }
 
 /* ---------------- Network chip ---------------- */
-function setNet() { el('net').textContent = navigator.onLine ? 'online' : 'offline'; }
+function setNet() { const n = el('net'); if (n) n.textContent = navigator.onLine ? 'online' : 'offline'; }
 window.addEventListener('online', () => { setNet(); flushQueue(); });
 window.addEventListener('offline', setNet);
 
-/* ---------------- API helpers (Inventory) ---------------- */
+/* ---------------- API helpers ---------------- */
 async function apiGET(route, params = {}) {
   const qs = new URLSearchParams({ route, ...params }).toString();
   const r = await fetch(`${BASE_URL}?${qs}`);
@@ -97,7 +96,7 @@ async function flushQueue() {
 async function submitOrQueue(body, successMsg){
   if (!navigator.onLine) {
     qPush(body);
-    toast('Submission queued and will upload when the internet connection is back.');
+    toast('Submission queued; will upload when back online.');
     return { queued:true };
   }
   try{
@@ -105,10 +104,9 @@ async function submitOrQueue(body, successMsg){
     toast(successMsg || 'Submitted');
     return res;
   }catch(err){
-    // If fetch reaches server but fails logically, surface error; if network error, queue
     if (String(err.message||'').match(/Failed to fetch|NetworkError|TypeError/i)) {
       qPush(body);
-      toast('Submission queued and will upload when the internet connection is back.');
+      toast('Submission queued; will upload when back online.');
       return { queued:true };
     }
     throw err;
@@ -118,12 +116,12 @@ async function submitOrQueue(body, successMsg){
 /* ---------------- Auth ---------------- */
 function isAuthed() { return !!LS.get(K.pin, null); }
 async function login(pin) {
-  await apiPOST({ kind: 'login', pin }); // Backend checks Settings!LOGIN_PIN
+  await apiPOST({ kind: 'login', pin });
   LS.set(K.pin, pin);
   return true;
 }
 
-/* ---------------- Lists (no direct DOM writes) ---------------- */
+/* ---------------- Lists ---------------- */
 async function loadLocs() {
   try {
     const j = await apiGET('locs');
@@ -137,16 +135,16 @@ async function loadParts() {
     const j = await apiGET('parts');
     const ids = (j.parts || []).map(p => p.PartID);
     LS.set(K.parts, ids);
-  } catch { /* fine if none yet */ }
+  } catch {}
   const ids = LS.get(K.parts, []);
   const dl = el('partsList');
   if (dl) dl.innerHTML = ids.map(id => `<option value="${id}">`).join('');
 }
 async function loadCats() {
   try {
-    const j = await apiGET('cats'); // {cats:[...]}
+    const j = await apiGET('cats');
     LS.set(K.cats, j.cats || []);
-  } catch { /* ignore */ }
+  } catch {}
   const cats = LS.get(K.cats, []);
   const dl = el('catsList');
   if (dl) dl.innerHTML = cats.map(c => `<option value="${c}">`).join('');
@@ -169,10 +167,14 @@ function locOptionsHtml() {
   ].join('');
 }
 function actionSelectHtml(val='used'){
-  const label = { used:'Use', received:'Receive', moved:'Move' };
-  const opts = ['used','received','moved']
-    .map(a=>`<option value="${a}" ${a===val?'selected':''}>${label[a]}</option>`).join('');
-  return `<select data-field="action">${opts}</select>`;
+  const opts = [
+    ['used','Use'],
+    ['received','Receive'],
+    ['moved','Move'],
+  ];
+  return `<select data-field="action">${
+    opts.map(([v,l]) => `<option value="${v}" ${v===val?'selected':''}>${l}</option>`).join('')
+  }</select>`;
 }
 function categoryInputHtml() {
   return `<input data-field="company" list="catsList" placeholder="Category (e.g. BUNN)"/>`;
@@ -193,39 +195,29 @@ function bulkRowHtml(){
       <td style="padding:6px"><button type="button" data-action="remove">✕</button></td>
     </tr>`;
 }
-
-// Enforce Use/Receive/Move per row (To=N/A for used, From=N/A for received)
 function enforceRowAction(tr){
   const action = tr.querySelector('[data-field="action"]')?.value || 'used';
   const fromSel = tr.querySelector('[data-field="fromLoc"]');
   const toSel   = tr.querySelector('[data-field="toLoc"]');
   if (!fromSel || !toSel) return;
-
   if (action === 'used') {
     if (!fromSel.value || fromSel.value === 'N/A') fromSel.value = '';
-    toSel.value = 'N/A';
-    toSel.disabled = true;
-    fromSel.disabled = false;
+    toSel.value = 'N/A'; toSel.disabled = true; fromSel.disabled = false;
   } else if (action === 'received') {
     if (!toSel.value || toSel.value === 'N/A') toSel.value = '';
-    fromSel.value = 'N/A';
-    fromSel.disabled = true;
-    toSel.disabled = false;
+    fromSel.value = 'N/A'; fromSel.disabled = true; toSel.disabled = false;
   } else { // moved
     if (toSel.value === 'N/A') toSel.value = '';
     if (fromSel.value === 'N/A') fromSel.value = '';
-    fromSel.disabled = false;
-    toSel.disabled = false;
+    fromSel.disabled = false; toSel.disabled = false;
   }
 }
 
 /* ---------------- Count Mode ---------------- */
-let lastCountCat = ''; // keep resolved category across saves
-
+let lastCountCat = '';
 function renderCountTable(row) {
   const locs = LS.get(K.locs, []);
   const hasMap = row && row.locations && typeof row.locations === 'object';
-
   const rows = locs.map(l=>{
     const cur = hasMap ? Number(row.locations[l]||0) : 0;
     return `
@@ -241,7 +233,6 @@ function renderCountTable(row) {
   el('countTable').innerHTML =
     `<thead><tr><th style="text-align:left;padding:8px">Location</th><th style="text-align:right;padding:8px">Current</th><th style="text-align:right;padding:8px">New</th></tr></thead><tbody>${rows}</tbody>`;
 }
-
 async function loadCountPart(){
   const partId = gv('countPartId');
   if (!partId){ toast('Enter a PartID'); return; }
@@ -264,10 +255,9 @@ function prependRecent(text) {
   el('recent')?.prepend(li);
 }
 
-/* ---------------- History (list + edit/void) ---------------- */
+/* ---------------- History ---------------- */
 async function loadTechs(){
-  const sel = el('historyTech');
-  if (!sel) return;
+  const sel = el('historyTech'); if (!sel) return;
   sel.disabled = true;
   sel.innerHTML = '<option value="">(loading…)</option>';
   try{
@@ -286,7 +276,6 @@ async function loadTechs(){
     sel.focus();
   }
 }
-
 function showHistFields(by){
   const blocks = {
     tech: 'histFieldTech',
@@ -295,13 +284,9 @@ function showHistFields(by){
     part: 'histFieldPart',
     job: 'histFieldJob',
   };
-  // hide all
   Object.values(blocks).forEach(id => el(id)?.classList.add('hidden'));
-  // show selected
-  const tgt = blocks[by];
-  if (tgt) el(tgt)?.classList.remove('hidden');
+  const tgt = blocks[by]; if (tgt) el(tgt)?.classList.remove('hidden');
 }
-
 function renderHistory(items){
   if (!el('historyList')) return;
   if (!items || !items.length){
@@ -330,43 +315,16 @@ function renderHistory(items){
   }).join('');
   el('historyList').innerHTML = `<ul id="recent">${rows}</ul>`;
 }
+function confirmChange(whenStr){ return confirm(`This was completed on ${whenStr || 'this date'}. Change your submission?`); }
+function confirmDelete(whenStr){ return confirm(`This was completed on ${whenStr || 'this date'}. Delete (void) this submission?`); }
 
-function confirmChange(whenStr){
-  return confirm(`This was completed on ${whenStr || 'this date'}. Are you sure you want to change your submission?`);
+/* ---------------- Notion helpers (via proxy) ---------------- */
+async function notionLookupByJobCode(jobCode){
+  return apiPOST({ action:'lookupTask', jobCode });
 }
-function confirmDelete(whenStr){
-  return confirm(`This was completed on ${whenStr || 'this date'}. Are you sure you want to delete (void) this submission?`);
+async function notionMarkPartsLogged(jobCode, desired='Parts Logged'){
+  return apiPOST({ action:'logParts', jobCode, partsStatus: desired });
 }
-
-/* ===================== Notion Proxy Helpers ===================== */
-// Keep these globally accessible for the HTML inline script
-async function notionPOST(bodyObj) {
-  if (!NOTION_URL || NOTION_URL.startsWith('PASTE_')) {
-    throw new Error('NOTION_URL is not configured.');
-  }
-  const res = await fetch(NOTION_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: NOTION_API_KEY, ...bodyObj })
-  });
-  const j = await res.json();
-  if (!j || j.ok === false) throw new Error(j && j.error || 'Notion proxy error');
-  return j;
-}
-
-// Lookup a task by Job Code (v2025-09-03 via data source query)
-async function notionLookupByJobCode(jobCode) {
-  return await notionPOST({ action: 'lookupTask', jobCode });
-}
-
-// Mark Parts Status -> "Parts Logged" (or override)
-async function notionMarkPartsLogged(jobCode, partsStatus='Parts Logged') {
-  return await notionPOST({ action: 'logParts', jobCode, partsStatus });
-}
-
-// Export to window for the small inline script in index.html
-window.notionLookupByJobCode = notionLookupByJobCode;
-window.notionMarkPartsLogged = notionMarkPartsLogged;
 
 /* ---------------- Boot ---------------- */
 window.addEventListener('DOMContentLoaded', async () => {
@@ -385,7 +343,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       await login(pin);
       el('gate')?.classList.add('hidden');
       el('app')?.classList.remove('hidden');
-    } catch (err) {
+    } catch {
       if (el('loginMsg')) el('loginMsg').textContent = 'Incorrect PIN or server error.';
     }
   });
@@ -403,14 +361,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   await loadParts();
   await loadCats();
 
-  // Seed one empty bulk row by default
+  // Seed one empty bulk row
   el('bulkTable')?.querySelector('tbody')?.insertAdjacentHTML('beforeend', bulkRowHtml());
   Array.from(el('bulkTable')?.querySelectorAll('tbody tr') || []).forEach(enforceRowAction);
 
   // === Bulk behaviors ===
   el('bulkAdd')?.addEventListener('click', ()=>{
-    const tb = el('bulkTable')?.querySelector('tbody');
-    if (!tb) return;
+    const tb = el('bulkTable')?.querySelector('tbody'); if (!tb) return;
     tb.insertAdjacentHTML('beforeend', bulkRowHtml());
     const tr = el('bulkTable').querySelector('tbody tr:last-child');
     enforceRowAction(tr);
@@ -418,13 +375,9 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Per-row logic
   el('bulkTable')?.addEventListener('change', async (e)=>{
-    const tr = e.target.closest('tr');
-    if (!tr) return;
+    const tr = e.target.closest('tr'); if (!tr) return;
 
-    if (e.target.matches('[data-field="action"]')){
-      enforceRowAction(tr);
-      return;
-    }
+    if (e.target.matches('[data-field="action"]')){ enforceRowAction(tr); return; }
 
     // Auto-fill Category when a PartID is chosen
     if (e.target.matches('[data-field="partId"]')){
@@ -443,14 +396,13 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
     }
   });
-
   el('bulkTable')?.addEventListener('click', (e)=>{
     if (e.target.dataset.action==='remove'){
       const tr = e.target.closest('tr'); if (tr) tr.remove();
     }
   });
 
-  // Submit All — idempotent via unique requestId per line + offline queue
+  // Submit All
   let submitting = false;
   const btnSubmit = el('bulkSubmit');
   btnSubmit?.addEventListener('click', async ()=>{
@@ -467,7 +419,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     const items = rows.map(tr=>{
       const get = name => { const n = tr.querySelector(`[data-field="${name}"]`); return n ? n.value : ''; };
-      const action = get('action') || 'used';
+      const action = (get('action') || 'used').toLowerCase(); // must be used|received|moved
       let fromLoc = get('fromLoc');
       let toLoc   = get('toLoc');
       const company = (get('company') || defaultCat).trim();
@@ -486,7 +438,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       return {
         company,
         tech,
-        action,
+        action, // already canonical
         partId: (get('partId')||'').trim(),
         qty: String(parseFloat(get('qty')||'0')||0),
         fromLoc, toLoc,
@@ -517,41 +469,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         enforceRowAction(el('bulkTable').querySelector('tbody tr:last-child'));
       }
       if (el('note')) el('note').value = '';
-
-      // Refresh datalists
       await flushQueue();
       await loadParts();
       await loadCats();
-
-      // === Notion: auto-mark Parts Logged when a Job Code is present ===
-      const code = jobCode;
-      if (code) {
-        try {
-          const mark = await notionMarkPartsLogged(code);
-          if (mark && mark.ok) {
-            toast('Notion: Parts Status → Parts Logged');
-            // If the task card is visible, refresh it
-            const card = el('taskCard');
-            if (card && card.style.display !== 'none') {
-              const res = await notionLookupByJobCode(code);
-              if (res && res.found && res.task) {
-                // Mirror the card update logic from index.html helper
-                const t = res.task;
-                el('taskName').textContent = t.name || '(Untitled)';
-                el('taskOpen').href = t.url || '#';
-                el('taskJobCode').textContent = t.jobCode || '—';
-                el('taskPartsStatus').textContent = t.partsStatus || '—';
-                el('taskDue').textContent = t.due ? new Date(t.due).toLocaleDateString() : '—';
-                card.style.display = 'block';
-              }
-            }
-          }
-        } catch (e) {
-          // Don’t block the inventory flow if Notion update fails
-          console.warn('Notion mark failed:', e);
-          toast('Notion update skipped (check proxy)');
-        }
-      }
     }catch(e){
       alert('Bulk submit failed: '+e.message);
     }finally{
@@ -566,10 +486,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     el('countPartId')?.focus();
   });
   el('btnCloseCount')?.addEventListener('click', ()=> closePanel('panelCount'));
-
-  // Load part data as soon as PartID entered/changed
   el('countPartId')?.addEventListener('change', loadCountPart);
-
   el('btnSaveCounts')?.addEventListener('click', async ()=>{
     const partId  = gv('countPartId');
     const tech    = gv('tech');
@@ -588,34 +505,25 @@ window.addEventListener('DOMContentLoaded', async () => {
   /* ====================== TOOLS: BACKORDER ====================== */
   el('btnBackorder')?.addEventListener('click', ()=>{
     openPanel('panelBackorder');
-    // Prefill from top fields if present
-    const topPart = gv('partId'); // optional if you had one
-    if (topPart) el('boPartId').value = topPart;
-    const topCat = gv('company');
-    if (topCat) el('boCategory').value = topCat;
+    const topCat = gv('company'); if (topCat) el('boCategory').value = topCat;
     el('boPartId')?.focus();
   });
   el('btnCloseBackorder')?.addEventListener('click', ()=> closePanel('panelBackorder'));
-
-  // Auto-fill boCategory on PartID change
   el('boPartId')?.addEventListener('change', async (e)=>{
     const pid = (e.target.value||'').trim();
     if (!pid) return;
     const cat = await autoCat(pid);
     if (cat && el('boCategory') && !el('boCategory').value) el('boCategory').value = cat;
   });
-
   el('btnSubmitBackorder')?.addEventListener('click', async ()=>{
     const partId = gv('boPartId');
     let company = gv('boCategory');
     const qtyStr = gv('boQty') || '1';
     const expected = gv('boExpected') ? String(Date.parse(gv('boExpected'))) : '';
     const note = gv('boNote');
-
     if (!partId){ alert('PartID required.'); return; }
     if (!company){ company = await autoCat(partId); }
     if (!company){ alert('Category required.'); return; }
-
     const payload = {
       kind: 'backorder',
       company,
@@ -630,7 +538,6 @@ window.addEventListener('DOMContentLoaded', async () => {
       await submitOrQueue(payload, 'Backorder submitted');
       prependRecent(`backorder ${payload.qty} × ${payload.partId} (${company})`);
       closePanel('panelBackorder');
-      // clear small form
       if (el('boQty')) el('boQty').value = '';
       if (el('boExpected')) el('boExpected').value = '';
       if (el('boNote')) el('boNote').value = '';
@@ -640,35 +547,22 @@ window.addEventListener('DOMContentLoaded', async () => {
   });
 
   /* ======================= TOOLS: HISTORY ======================= */
-  // Open History panel
   el('btnHistory')?.addEventListener('click', async ()=>{
     openPanel('panelHistory');
     await loadTechs();
     showHistFields(gv('histFilter') || 'tech');
   });
   el('historyClose')?.addEventListener('click', ()=> closePanel('panelHistory'));
-
-  // Toggle contextual fields by filter
-  el('histFilter')?.addEventListener('change', (e)=>{
-    showHistFields(e.target.value);
-  });
-
-  // Load history (flexible)
+  el('histFilter')?.addEventListener('change', (e)=> showHistFields(e.target.value));
   el('historyLoad')?.addEventListener('click', async ()=>{
     const by = gv('histFilter') || 'tech';
     const limit = String(parseInt(gv('historyLimit') || '100'));
     const params = { limit };
-
     if (by === 'tech') params.tech = gv('historyTech');
-    if (by === 'daterange') {
-      params.start = gv('historyStart');
-      params.end   = gv('historyEnd');
-    }
+    if (by === 'daterange') { params.start = gv('historyStart'); params.end = gv('historyEnd'); }
     if (by === 'category') params.category = gv('historyCategory');
     if (by === 'part')     params.partId   = gv('historyPart');
     if (by === 'job')      params.jobCode  = gv('historyJob');
-
-    // Prefer flexible route; falls back to tech-only route
     try{
       let j;
       if (by === 'tech' && !params.start && !params.category && !params.partId && !params.jobCode){
@@ -681,16 +575,12 @@ window.addEventListener('DOMContentLoaded', async () => {
       alert('Failed to load history: '+e.message);
     }
   });
-
-  // History edit/void with confirmations
   el('historyList')?.addEventListener('click', async (e)=>{
     const editId = e.target.dataset.edit;
     const voidId = e.target.dataset.void;
     if (!editId && !voidId) return;
-
     const li = e.target.closest('li');
     const whenStr = li ? (li.querySelector('strong')?.textContent || '') : '';
-
     if (voidId){
       if (!confirmDelete(whenStr)) return;
       try{
@@ -699,12 +589,11 @@ window.addEventListener('DOMContentLoaded', async () => {
       }catch(err){ alert('Delete failed: '+err.message); }
       return;
     }
-
     if (editId){
       if (!confirmChange(whenStr)) return;
       const a = prompt('Action (used, received, moved):','used');
-      const action = a ? a.trim() : '';
-      if (!action) return;
+      const action = a ? a.trim().toLowerCase() : '';
+      if (!action || !['used','received','moved'].includes(action)) return alert('Invalid action.');
       let fromLoc = '', toLoc = '';
       if (action==='used'){
         const f = prompt('From location (required):',''); fromLoc = f ? f.trim() : '';
@@ -720,7 +609,6 @@ window.addEventListener('DOMContentLoaded', async () => {
       const qty = q.trim();
       const n = prompt('Note (optional):','');
       const note = n ? n.trim() : '';
-
       try{
         await submitOrQueue({ kind:'edit',
           requestId: editId,
@@ -731,4 +619,52 @@ window.addEventListener('DOMContentLoaded', async () => {
       }catch(err){ alert('Edit failed: '+err.message); }
     }
   });
-});
+
+  /* ======================= NOTION BUTTONS ======================= */
+  const btnLookup = el('btnLookupTask');
+  const btnLogged = el('btnMarkLogged');
+
+  btnLookup && btnLookup.addEventListener('click', async ()=>{
+    const code = gv('jobCode');
+    if (!code){ alert('Enter a Job Code first.'); return; }
+    try{
+      const res = await notionLookupByJobCode(code);
+      if (res && res.ok && res.found && res.task){
+        const t = res.task;
+        el('taskName').textContent = t.name || '(Untitled)';
+        el('taskOpen').href = t.url || '#';
+        el('taskJobCode').textContent = t.jobCode || code;
+        el('taskPartsStatus').textContent = t.partsStatus || '—';
+        el('taskDue').textContent = t.due ? new Date(t.due).toLocaleDateString() : '—';
+        el('taskCard').style.display = 'block';
+        toast('Task loaded from Notion');
+      } else {
+        el('taskCard').style.display = 'none';
+        toast('No task found for that Job Code');
+      }
+    }catch(e){
+      alert('Lookup failed: ' + (e?.message || e));
+    }
+  });
+
+  btnLogged && btnLogged.addEventListener('click', async ()=>{
+    const code = gv('jobCode');
+    if (!code){ alert('Enter a Job Code first.'); return; }
+    try{
+      const res = await notionMarkPartsLogged(code, 'Parts Logged');
+      if (res && res.ok){
+        toast('Parts Status updated in Notion');
+        const again = await notionLookupByJobCode(code);
+        if (again?.task){
+          el('taskPartsStatus').textContent = again.task.partsStatus || 'Parts Logged';
+          el('taskCard').style.display = 'block';
+        }
+      } else {
+        alert('Update failed: ' + (res?.error || 'unknown'));
+      }
+    }catch(e){
+      alert('Update failed: ' + (e?.message || e));
+    }
+  });
+
+}); // end DOMContentLoaded

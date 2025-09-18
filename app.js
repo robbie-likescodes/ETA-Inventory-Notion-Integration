@@ -1,23 +1,33 @@
 /**************** FIXED CONNECTIONS (update if you redeploy) ****************/
 // Inventory API (Apps Script /exec)
-var BASE_URL = "https://script.google.com/macros/s/AKfycbwOQLFY_CwEjnRaxWG1kbelhpI7gGEiBK-1QWGk0bIVM-YZb1wqk8sTjPa6Zn4mFhbf/exec";
-var API_KEY  = "thebluedogisfat";
+const BASE_URL = "https://script.google.com/macros/s/AKfycbwOQLFY_CwEjnRaxWG1kbelhpI7gGEiBK-1QWGk0bIVM-YZb1wqk8sTjPa6Zn4mFhbf/exec";
+const API_KEY  = "thebluedogisfat"; // must match Settings!API_KEY
 /***************************************************************************/
 
-/* ---------------- Small helpers ---------------- */
-var LS = {
-  get: function(k, d){ try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } },
-  set: function(k, v){ localStorage.setItem(k, JSON.stringify(v)); },
-  del: function(k){ localStorage.removeItem(k); }
+/* ---------------- Local storage helpers ---------------- */
+const LS = {
+  get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
+  del: (k) => localStorage.removeItem(k),
 };
-var K = { pin:'inv.pin', tech:'inv.tech', company:'inv.company', queue:'inv.queue', parts:'inv.parts', cats:'inv.cats', locs:'inv.locs' };
+const K = {
+  pin: 'inv.pin',
+  tech: 'inv.tech',
+  company: 'inv.company', // Category in Sheets
+  queue: 'inv.queue',
+  parts: 'inv.parts',
+  cats:  'inv.cats',
+  locs: 'inv.locs',
+  jobs: 'inv.jobs',           // cached job list (subset)
+  jobSel: 'inv.job.selected', // {id,name}
+};
 
-function el(id){ return document.getElementById(id); }
-function gv(id){ var n = el(id); return (n && n.value ? n.value : '').trim(); }
+const el = (id) => document.getElementById(id);
+const gv = (id) => (el(id)?.value || '').trim();
 
 /* ---------------- Toast ---------------- */
 function ensureToastHost(){
-  var t = document.querySelector('.toast');
+  let t = document.querySelector('.toast');
   if (!t){
     t = document.createElement('div');
     t.className = 'toast';
@@ -25,175 +35,233 @@ function ensureToastHost(){
   }
   return t;
 }
-function toast(msg, ms){
-  if (ms == null) ms = 2200;
-  var t = ensureToastHost();
+function toast(msg, ms=2200){
+  const t = ensureToastHost();
   t.textContent = msg;
   t.classList.add('show');
-  if (t._hide) window.clearTimeout(t._hide);
-  t._hide = setTimeout(function(){ t.classList.remove('show'); }, ms);
+  window.clearTimeout(t._hide);
+  t._hide = setTimeout(()=> t.classList.remove('show'), ms);
 }
 
 /* ---------------- Panels ---------------- */
 function openPanel(id){
-  var p = el(id); if (!p) return;
+  const p = el(id); if (!p) return;
   p.classList.add('show');
   p.classList.remove('hidden');
   p.scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 function closePanel(id){
-  var p = el(id); if (!p) return;
+  const p = el(id); if (!p) return;
   p.classList.remove('show');
   p.classList.add('hidden');
 }
 
 /* ---------------- Network chip ---------------- */
-function setNet(){
-  var n = el('net');
-  if (n) n.textContent = navigator.onLine ? 'online' : 'offline';
-}
-window.addEventListener('online', function(){ setNet(); flushQueue(); });
+function setNet() { const n = el('net'); if (n) n.textContent = navigator.onLine ? 'online' : 'offline'; }
+window.addEventListener('online', () => { setNet(); flushQueue(); });
 window.addEventListener('offline', setNet);
 
 /* ---------------- API helpers ---------------- */
-function apiGET(route, params){
-  if (!params) params = {};
-  var qp = new URLSearchParams(Object.assign({ route: route }, params)).toString();
-  return fetch(BASE_URL + "?" + qp).then(function(r){ return r.json(); }).then(function(j){
-    if (!j.ok) throw new Error(j.error || 'GET failed');
-    return j;
-  });
+async function apiGET(route, params = {}) {
+  const qs = new URLSearchParams({ route, ...params }).toString();
+  const r = await fetch(`${BASE_URL}?${qs}`);
+  const j = await r.json();
+  if (!j.ok) throw new Error(j.error || 'GET failed');
+  return j;
 }
-function apiPOST(body){
-  var payload = Object.assign({ api_key: API_KEY }, body || {});
-  return fetch(BASE_URL, {
+async function apiPOST(body) {
+  const res = await fetch(BASE_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(payload)
-  }).then(function(r){ return r.json(); }).then(function(j){
-    if (!j.ok) throw new Error(j.error || 'POST failed');
-    return j;
+    body: new URLSearchParams({ api_key: API_KEY, ...body }),
   });
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'POST failed');
+  return j;
 }
 
-/* -------------- Post or Queue wrapper -------------- */
-function qAll(){ return LS.get(K.queue, []); }
-function qPush(p){ var q = qAll(); q.push(p); LS.set(K.queue, q); }
-function qSet(items){ LS.set(K.queue, items); }
-
-function flushQueue(){
-  var q = qAll();
-  if (!q.length || !navigator.onLine) return Promise.resolve();
-  if (el('sync')) el('sync').textContent = 'Sync: flushing…';
-  var keep = [];
-  // chain sequentially to be gentle
-  return q.reduce(function(p, item){
-    return p.then(function(){
-      return apiPOST(item).catch(function(){ keep.push(item); });
-    });
-  }, Promise.resolve()).then(function(){
-    qSet(keep);
-    if (el('sync')) el('sync').textContent = keep.length ? ('Sync: retrying ('+keep.length+')') : 'Sync: idle';
-  });
+/* -------------- Post or Queue wrapper (offline friendly) -------------- */
+function qAll() { return LS.get(K.queue, []); }
+function qPush(p) { const q = qAll(); q.push(p); LS.set(K.queue, q); }
+function qSet(items) { LS.set(K.queue, items); }
+async function flushQueue() {
+  const q = qAll();
+  if (!q.length || !navigator.onLine) return;
+  el('sync') && (el('sync').textContent = 'Sync: flushing…');
+  const keep = [];
+  for (const item of q) {
+    try { await apiPOST(item); } catch { keep.push(item); }
+  }
+  qSet(keep);
+  el('sync') && (el('sync').textContent = keep.length ? `Sync: retrying (${keep.length})` : 'Sync: idle');
 }
-
-function submitOrQueue(body, successMsg){
-  if (!navigator.onLine){
+async function submitOrQueue(body, successMsg){
+  if (!navigator.onLine) {
     qPush(body);
     toast('Submission queued; will upload when back online.');
-    return Promise.resolve({ queued:true });
+    return { queued:true };
   }
-  return apiPOST(body).then(function(res){
+  try{
+    const res = await apiPOST(body);
     toast(successMsg || 'Submitted');
     return res;
-  }).catch(function(err){
-    var m = String(err && err.message || '');
-    if (/Failed to fetch|NetworkError|TypeError/.test(m)){
+  }catch(err){
+    if (String(err.message||'').match(/Failed to fetch|NetworkError|TypeError/i)) {
       qPush(body);
       toast('Submission queued; will upload when back online.');
       return { queued:true };
     }
     throw err;
-  });
+  }
 }
 
 /* ---------------- Auth ---------------- */
-function isAuthed(){ return !!LS.get(K.pin, null); }
-function login(pin){
-  return apiPOST({ kind:'login', pin: pin }).then(function(){ LS.set(K.pin, pin); return true; });
+function isAuthed() { return !!LS.get(K.pin, null); }
+async function login(pin) {
+  await apiPOST({ kind: 'login', pin });
+  LS.set(K.pin, pin);
+  return true;
 }
 
 /* ---------------- Lists ---------------- */
-function loadLocs(){
-  return apiGET('locs').then(function(j){
+async function loadLocs() {
+  try {
+    const j = await apiGET('locs');
     LS.set(K.locs, j.locs || []);
-  }).catch(function(){
+  } catch {
     LS.set(K.locs, ['Office','Shop','CrashBox','Van1','Van2','Van3','Van4']);
-  });
+  }
 }
-function loadParts(){
-  return apiGET('parts').then(function(j){
-    var ids = (j.parts || []).map(function(p){ return p.PartID; });
+async function loadParts() {
+  try {
+    const j = await apiGET('parts');
+    const ids = (j.parts || []).map(p => p.PartID);
     LS.set(K.parts, ids);
-  }).catch(function(){ /* ignore */ }).then(function(){
-    var ids = LS.get(K.parts, []);
-    var dl = el('partsList');
-    if (dl) dl.innerHTML = ids.map(function(id){ return '<option value="'+id+'">'; }).join('');
-  });
+  } catch {}
+  const ids = LS.get(K.parts, []);
+  const dl = el('partsList');
+  if (dl) dl.innerHTML = ids.map(id => `<option value="${id}">`).join('');
 }
-function loadCats(){
-  return apiGET('cats').then(function(j){
+async function loadCats() {
+  try {
+    const j = await apiGET('cats');
     LS.set(K.cats, j.cats || []);
-  }).catch(function(){ /* ignore */ }).then(function(){
-    var cats = LS.get(K.cats, []);
-    var dl = el('catsList');
-    if (dl) dl.innerHTML = cats.map(function(c){ return '<option value="'+c+'">'; }).join('');
-  });
+  } catch {}
+  const cats = LS.get(K.cats, []);
+  const dl = el('catsList');
+  if (dl) dl.innerHTML = cats.map(c => `<option value="${c}">`).join('');
 }
-function autoCat(partId){
-  if (!partId) return Promise.resolve('');
-  return apiGET('autocat', { partId: partId }).then(function(j){ return j.category || ''; }).catch(function(){ return ''; });
+async function autoCat(partId){
+  if (!partId) return '';
+  try{
+    const j = await apiGET('autocat', { partId });
+    return j.category || '';
+  }catch{ return ''; }
 }
 
-/* ---------------- UI pieces ---------------- */
-function locOptionsHtml(){
-  var locs = LS.get(K.locs, []);
-  return ['<option value="" disabled>Select location…</option>','<option value="N/A">N/A</option>']
-    .concat(locs.map(function(l){ return '<option value="'+l+'">'+l+'</option>'; })).join('');
+/* ---------------- Jobs (Notion) ---------------- */
+let JOBS_CACHE = LS.get(K.jobs, []); // [{id,name,client,address,status,partsStatus}]
+const jobsDL = () => document.getElementById('jobsList');
+
+function stampJobsDatalist(list){
+  const dl = jobsDL();
+  if (!dl) return;
+  // show label with optional client/status but keep value: name (so typing is easy)
+  dl.innerHTML = list.map(j => {
+    const bits = [j.name, j.client, j.status].filter(Boolean).join(' • ');
+    return `<option value="${j.name}">${bits}</option>`;
+  }).join('');
 }
-function actionSelectHtml(val){
-  if (!val) val='used';
-  var opts = [['used','Use'],['received','Receive'],['moved','Move']];
-  return '<select data-field="action">' + opts.map(function(p){
-    var v=p[0], l=p[1]; return '<option value="'+v+'" '+(v===val?'selected':'')+'>'+l+'</option>';
-  }).join('') + '</select>';
+
+function setSelectedJob(job){
+  if (!job){ LS.del(K.jobSel); return; }
+  LS.set(K.jobSel, { id: job.id, name: job.name });
+  // Show selection under the title card if present
+  if (el('taskCard')) el('taskCard').style.display = 'none';
 }
-function categoryInputHtml(){ return '<input data-field="company" list="catsList" placeholder="Category (e.g. BUNN)"/>'; }
+
+function getSelectedJob(){
+  const s = LS.get(K.jobSel, null);
+  if (!s) return null;
+  // Attempt to hydrate from cache; otherwise keep minimal
+  const full = JOBS_CACHE.find(j => j.id === s.id);
+  return full || s;
+}
+
+async function fetchJobs(q){
+  const j = await apiGET('jobs', { q, limit: 25 });
+  JOBS_CACHE = j.jobs || [];
+  LS.set(K.jobs, JOBS_CACHE.slice(0,150)); // keep a small cache
+  stampJobsDatalist(JOBS_CACHE);
+  return JOBS_CACHE;
+}
+
+async function ensureJobsForInput(){
+  const name = (el('job')?.value || '').trim();
+  const has = JOBS_CACHE.some(j => j.name.toLowerCase() === name.toLowerCase());
+  if (name && !has){
+    await fetchJobs(name);
+  } else if (!name && !JOBS_CACHE.length){
+    await fetchJobs(''); // initial list
+  }
+}
+
+function findJobByName(name){
+  if (!name) return null;
+  const lower = name.toLowerCase();
+  return JOBS_CACHE.find(j => j.name.toLowerCase() === lower) || null;
+}
+
+/* ---------------- UI helpers ---------------- */
+function locOptionsHtml() {
+  const locs = LS.get(K.locs, []);
+  return [
+    '<option value="" disabled>Select location…</option>',
+    '<option value="N/A">N/A</option>',
+    ...locs.map(l => `<option value="${l}">${l}</option>`)
+  ].join('');
+}
+function actionSelectHtml(val='used'){
+  const opts = [
+    ['used','Use'],
+    ['received','Receive'],
+    ['moved','Move'],
+  ];
+  return `<select data-field="action">${
+    opts.map(([v,l]) => `<option value="${v}" ${v===val?'selected':''}>${l}</option>`).join('')
+  }</select>`;
+}
+function categoryInputHtml() {
+  return `<input data-field="company" list="catsList" placeholder="Category (e.g. BUNN)"/>`;
+}
 function bulkRowHtml(){
-  return ''+
-  '<tr>'+
-    '<td style="padding:6px"><input data-field="partId" list="partsList" placeholder="PartID"/></td>'+
-    '<td style="padding:6px">'+categoryInputHtml()+'</td>'+
-    '<td style="padding:6px">'+actionSelectHtml()+'</td>'+
-    '<td style="padding:6px"><select data-field="fromLoc">'+locOptionsHtml()+'</select></td>'+
-    '<td style="padding:6px"><select data-field="toLoc">'+locOptionsHtml()+'</select></td>'+
-    '<td class="qty" style="padding:6px;text-align:right"><input data-field="qty" type="number" min="0.01" step="0.01" style="width:110px;text-align:right"/></td>'+
-    '<td style="padding:6px"><button type="button" data-action="remove">✕</button></td>'+
-  '</tr>';
+  return `
+    <tr>
+      <td style="padding:6px">
+        <input data-field="partId" list="partsList" placeholder="PartID"/>
+      </td>
+      <td style="padding:6px">${categoryInputHtml()}</td>
+      <td style="padding:6px">${actionSelectHtml()}</td>
+      <td style="padding:6px"><select data-field="fromLoc">${locOptionsHtml()}</select></td>
+      <td style="padding:6px"><select data-field="toLoc">${locOptionsHtml()}</select></td>
+      <td class="qty" style="padding:6px;text-align:right">
+        <input data-field="qty" type="number" min="0.01" step="0.01" style="width:110px;text-align:right"/>
+      </td>
+      <td style="padding:6px"><button type="button" data-action="remove">✕</button></td>
+    </tr>`;
 }
 function enforceRowAction(tr){
-  var actionEl = tr.querySelector('[data-field="action"]');
-  var action = actionEl ? actionEl.value : 'used';
-  var fromSel = tr.querySelector('[data-field="fromLoc"]');
-  var toSel   = tr.querySelector('[data-field="toLoc"]');
+  const action = tr.querySelector('[data-field="action"]')?.value || 'used';
+  const fromSel = tr.querySelector('[data-field="fromLoc"]');
+  const toSel   = tr.querySelector('[data-field="toLoc"]');
   if (!fromSel || !toSel) return;
-  if (action === 'used'){
+  if (action === 'used') {
     if (!fromSel.value || fromSel.value === 'N/A') fromSel.value = '';
     toSel.value = 'N/A'; toSel.disabled = true; fromSel.disabled = false;
-  } else if (action === 'received'){
+  } else if (action === 'received') {
     if (!toSel.value || toSel.value === 'N/A') toSel.value = '';
     fromSel.value = 'N/A'; fromSel.disabled = true; toSel.disabled = false;
-  } else {
+  } else { // moved
     if (toSel.value === 'N/A') toSel.value = '';
     if (fromSel.value === 'N/A') fromSel.value = '';
     fromSel.disabled = false; toSel.disabled = false;
@@ -201,420 +269,496 @@ function enforceRowAction(tr){
 }
 
 /* ---------------- Count Mode ---------------- */
-var lastCountCat = '';
-function renderCountTable(row){
-  var locs = LS.get(K.locs, []);
-  var hasMap = row && row.locations && typeof row.locations === 'object';
-  var rows = locs.map(function(l){
-    var cur = hasMap ? Number(row.locations[l] || 0) : 0;
-    return ''+
-      '<tr>'+
-        '<td style="padding:8px">'+l+'</td>'+
-        '<td style="padding:8px;text-align:right">'+cur+'</td>'+
-        '<td style="padding:8px;text-align:right">'+
-          '<input data-loc="'+l+'" type="number" step="1" value="'+cur+'" '+
-            'style="width:120px;text-align:right;background:#111;color:#eee;border:1px solid #333;border-radius:8px;padding:6px"/>'+
-        '</td>'+
-      '</tr>';
+let lastCountCat = '';
+function renderCountTable(row) {
+  const locs = LS.get(K.locs, []);
+  const hasMap = row && row.locations && typeof row.locations === 'object';
+  const rows = locs.map(l=>{
+    const cur = hasMap ? Number(row.locations[l]||0) : 0;
+    return `
+      <tr>
+        <td style="padding:8px">${l}</td>
+        <td style="padding:8px;text-align:right">${cur}</td>
+        <td style="padding:8px;text-align:right">
+          <input data-loc="${l}" type="number" step="1" value="${cur}"
+            style="width:120px;text-align:right;background:#111;color:#eee;border:1px solid #333;border-radius:8px;padding:6px"/>
+        </td>
+      </tr>`;
   }).join('');
-  var table = el('countTable');
-  if (table){
-    table.innerHTML = '<thead><tr><th style="text-align:left;padding:8px">Location</th><th style="text-align:right;padding:8px">Current</th><th style="text-align:right;padding:8px">New</th></tr></thead><tbody>'+rows+'</tbody>';
-  }
+  el('countTable').innerHTML =
+    `<thead><tr><th style="text-align:left;padding:8px">Location</th><th style="text-align:right;padding:8px">Current</th><th style="text-align:right;padding:8px">New</th></tr></thead><tbody>${rows}</tbody>`;
 }
-function loadCountPart(){
-  var partId = gv('countPartId');
+async function loadCountPart(){
+  const partId = gv('countPartId');
   if (!partId){ toast('Enter a PartID'); return; }
-  autoCat(partId).then(function(company){
-    if (!company){ toast('No category found for this PartID'); return; }
-    lastCountCat = company;
-    return apiGET('part', { company: company, partId: partId }).then(function(j){
-      el('countMeta').textContent = company+' — '+partId;
-      renderCountTable(j.row || {});
-    });
-  }).catch(function(e){
-    alert('Could not load part row: ' + (e && e.message || e));
-  });
+  let company = await autoCat(partId);
+  if (!company){ toast('No category found for this PartID'); return; }
+  lastCountCat = company;
+  try{
+    const j = await apiGET('part', { company, partId });
+    el('countMeta').textContent = `${company} — ${partId}`;
+    renderCountTable(j.row || {});
+  }catch(e){
+    alert('Could not load part row: '+e.message);
+  }
 }
 
 /* ---------------- Recent list ---------------- */
-function prependRecent(text){
-  var list = el('recent'); if (!list) return;
-  var li = document.createElement('li');
+function prependRecent(text) {
+  const li = document.createElement('li');
   li.textContent = text;
-  list.prepend(li);
+  el('recent')?.prepend(li);
 }
 
 /* ---------------- History ---------------- */
-function loadTechs(){
-  var sel = el('historyTech'); if (!sel) return Promise.resolve();
+async function loadTechs(){
+  const sel = el('historyTech'); if (!sel) return;
   sel.disabled = true;
   sel.innerHTML = '<option value="">(loading…)</option>';
-  return apiGET('techs').then(function(j){
-    var techs = j.techs || [];
-    var me = gv('tech');
-    if (me && techs.indexOf(me) < 0) techs.unshift(me);
-    sel.innerHTML = techs.length ? techs.map(function(t){ return '<option>'+t+'</option>'; }).join('')
-                                 : '<option value="">(no records yet)</option>';
+  try{
+    const j = await apiGET('techs');
+    let techs = j.techs || [];
+    const me = gv('tech');
+    if (me && !techs.includes(me)) techs = [me, ...techs];
+    sel.innerHTML = techs.length
+      ? techs.map(t=>`<option>${t}</option>`).join('')
+      : '<option value="">(no records yet)</option>';
     sel.selectedIndex = 0;
-  }).catch(function(){
+  }catch{
     sel.innerHTML = '<option value="">(load failed)</option>';
-  }).finally ? sel.disabled = false : (sel.disabled = false);
+  }finally{
+    sel.disabled = false;
+    sel.focus();
+  }
 }
 function showHistFields(by){
-  var blocks = { tech:'histFieldTech', daterange:'histFieldDate', category:'histFieldCategory', part:'histFieldPart', job:'histFieldJob' };
-  Object.keys(blocks).forEach(function(k){ var n = el(blocks[k]); if (n) n.classList.add('hidden'); });
-  var tgt = blocks[by]; if (tgt){ var n2 = el(tgt); if (n2) n2.classList.remove('hidden'); }
+  const blocks = {
+    tech: 'histFieldTech',
+    daterange: 'histFieldDate',
+    category: 'histFieldCategory',
+    part: 'histFieldPart',
+    job: 'histFieldJob', // retained in UI, but independent of Notion now
+  };
+  Object.values(blocks).forEach(id => el(id)?.classList.add('hidden'));
+  const tgt = blocks[by]; if (tgt) el(tgt)?.classList.remove('hidden');
 }
 function renderHistory(items){
-  var host = el('historyList'); if (!host) return;
-  if (!items || !items.length){ host.innerHTML = '<div class="muted small">No records.</div>'; return; }
-  var rows = items.map(function(it){
-    var when = it.ts ? new Date(it.ts).toLocaleString() : '';
-    var move =
-      it.action==='moved'    ? (it.qty+' '+it.partId+' ('+(it.fromLoc||'—')+'→'+(it.toLoc||'—')+')') :
-      it.action==='used'     ? (it.qty+' '+it.partId+' (from '+(it.fromLoc||'—')+')') :
-      it.action==='received' ? (it.qty+' '+it.partId+' (to '+(it.toLoc||'—')+')') :
-      it.action==='count'    ? ('count Δ='+it.qty+' '+it.partId) :
-      it.action==='backorder'? ('BO '+it.qty+' '+it.partId) : (it.qty+' '+it.partId);
-    var extra = [it.category || it.company, it.jobCode].filter(Boolean).join(' • ');
-    var note = it.note ? (' — '+it.note) : '';
-    var canEdit = ['count','backorder'].indexOf(String(it.action||'')) < 0;
-    var buttons = canEdit
-      ? '<button type="button" data-edit="'+it.requestId+'" class="small">Edit</button> '+
-        '<button type="button" data-void="'+it.requestId+'" class="small">Delete</button>'
-      : '<span class="muted small">(locked)</span>';
-    return '<li data-id="'+it.requestId+'">'+
-      '<strong>'+when+'</strong> — '+move+' <span class="muted small">'+extra+'</span>'+note+
-      '<div class="inline" style="margin-top:4px;gap:6px">'+buttons+'</div>'+
-    '</li>';
+  if (!el('historyList')) return;
+  if (!items || !items.length){
+    el('historyList').innerHTML = `<div class="muted small">No records.</div>`;
+    return;
+  }
+  const rows = items.map(it=>{
+    const when = it.ts ? new Date(it.ts).toLocaleString() : '';
+    const move =
+      it.action==='moved'    ? `${it.qty} ${it.partId} (${it.fromLoc||'—'}→${it.toLoc||'—'})` :
+      it.action==='used'     ? `${it.qty} ${it.partId} (from ${it.fromLoc||'—'})` :
+      it.action==='received' ? `${it.qty} ${it.partId} (to ${it.toLoc||'—'})` :
+      it.action==='count'    ? `count Δ=${it.qty} ${it.partId}` :
+      it.action==='backorder'? `BO ${it.qty} ${it.partId}` : `${it.qty} ${it.partId}`;
+    const extra = [it.category || it.company, it.jobCode].filter(Boolean).join(' • ');
+    const note = it.note ? ` — ${it.note}` : '';
+    const canEdit = !['count','backorder'].includes(String(it.action||''));
+    const buttons = canEdit
+      ? `<button type="button" data-edit="${it.requestId}" class="small">Edit</button>
+         <button type="button" data-void="${it.requestId}" class="small">Delete</button>`
+      : `<span class="muted small">(locked)</span>`;
+    return `<li data-id="${it.requestId}">
+      <strong>${when}</strong> — ${move} <span class="muted small">${extra}</span>${note}
+      <div class="inline" style="margin-top:4px;gap:6px">${buttons}</div>
+    </li>`;
   }).join('');
-  host.innerHTML = '<ul id="recent">'+rows+'</ul>';
+  el('historyList').innerHTML = `<ul id="recent">${rows}</ul>`;
 }
-function confirmChange(whenStr){ return confirm('This was completed on '+(whenStr || 'this date')+'. Change your submission?'); }
-function confirmDelete(whenStr){ return confirm('This was completed on '+(whenStr || 'this date')+'. Delete (void) this submission?'); }
+function confirmChange(whenStr){ return confirm(`This was completed on ${whenStr || 'this date'}. Change your submission?`); }
+function confirmDelete(whenStr){ return confirm(`This was completed on ${whenStr || 'this date'}. Delete (void) this submission?`); }
 
-/* ---------------- Notion helpers (via proxy) ---------------- */
-function notionLookupByJobCode(jobCode){ return apiPOST({ action:'lookupTask', jobCode: jobCode }); }
-function notionMarkPartsLogged(jobCode, desired){ if (!desired) desired='Parts Logged'; return apiPOST({ action:'logParts', jobCode: jobCode, partsStatus: desired }); }
+/* ---------------- Notion helpers (via proxy, pageId) ---------------- */
+async function notionLookupByPageId(pageId){
+  return apiPOST({ action:'lookupTask', pageId });
+}
+async function notionMarkPartsLogged(pageId, desired='Parts Logged'){
+  return apiPOST({ action:'logParts', pageId, partsStatus: desired });
+}
 
 /* ---------------- Boot ---------------- */
-window.addEventListener('DOMContentLoaded', function(){
+window.addEventListener('DOMContentLoaded', async () => {
   setNet();
 
   // Login gate
-  if (isAuthed()){
-    var g = el('gate'); if (g) g.classList.add('hidden');
-    var a = el('app');  if (a) a.classList.remove('hidden');
+  if (isAuthed()) {
+    el('gate')?.classList.add('hidden');
+    el('app')?.classList.remove('hidden');
   }
-  var loginForm = el('loginForm');
-  if (loginForm){
-    loginForm.addEventListener('submit', function(e){
-      e.preventDefault();
-      var msg = el('loginMsg'); if (msg) msg.textContent = '';
-      var pin = gv('pin');
-      login(pin).then(function(){
-        var g = el('gate'); if (g) g.classList.add('hidden');
-        var a = el('app');  if (a) a.classList.remove('hidden');
-      }).catch(function(){
-        var m = el('loginMsg'); if (m) m.textContent = 'Incorrect PIN or server error.';
-      });
-    });
-  }
+  el('loginForm')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (el('loginMsg')) el('loginMsg').textContent = '';
+    const pin = gv('pin');
+    try {
+      await login(pin);
+      el('gate')?.classList.add('hidden');
+      el('app')?.classList.remove('hidden');
+    } catch {
+      if (el('loginMsg')) el('loginMsg').textContent = 'Incorrect PIN or server error.';
+    }
+  });
 
-  // Remember tech & default Category
-  var techInput = el('tech');
-  var compInput = el('company'); // note: top-level company field is not in the HTML; per-row company is used
+  // Remember tech & default Category (company)
+  const techInput = el('tech');
+  const compInput = el('company');
   if (techInput) techInput.value = LS.get(K.tech, '');
   if (compInput) compInput.value = LS.get(K.company, '');
-  if (techInput) techInput.addEventListener('change', function(){ LS.set(K.tech, gv('tech')); });
-  if (compInput) compInput.addEventListener('change', function(){ LS.set(K.company, gv('company')); });
+  techInput?.addEventListener('change', () => LS.set(K.tech, gv('tech')));
+  compInput?.addEventListener('change', () => LS.set(K.company, gv('company')));
+
+  // ---- Jobs UI wiring (type-to-search) ----
+  // Create jobs datalist if the page doesn't have one yet
+  if (!jobsDL()){
+    const dl = document.createElement('datalist');
+    dl.id = 'jobsList';
+    document.body.appendChild(dl);
+  }
+  // If your HTML Job input uses a different id, adjust here
+  const jobInput = el('job') || el('jobName') || el('jobCode'); // fallback if old id remains
+  if (jobInput) jobInput.setAttribute('list','jobsList');
+
+  // preload cache
+  stampJobsDatalist(JOBS_CACHE);
+
+  // search as you type
+  jobInput?.addEventListener('input', async (e)=>{
+    const q = (e.target.value || '').trim();
+    // light debounce
+    window.clearTimeout(jobInput._q);
+    jobInput._q = setTimeout(async ()=>{
+      try { await fetchJobs(q); } catch {}
+    }, 150);
+  });
+
+  // when you leave the field, try to lock selection
+  jobInput?.addEventListener('change', async ()=>{
+    await ensureJobsForInput();
+    const job = findJobByName(jobInput.value);
+    if (job){
+      setSelectedJob(job);
+      toast(`Selected job: ${job.name}`);
+    }else{
+      setSelectedJob(null);
+    }
+  });
 
   // Load lists
-  Promise.resolve()
-    .then(loadLocs)
-    .then(loadParts)
-    .then(loadCats);
+  await loadLocs();
+  await loadParts();
+  await loadCats();
 
   // Seed one empty bulk row
-  var bulkTable = el('bulkTable');
-  if (bulkTable){
-    var tb = bulkTable.querySelector('tbody');
-    if (tb){ tb.insertAdjacentHTML('beforeend', bulkRowHtml()); }
-    var allRows = bulkTable.querySelectorAll('tbody tr');
-    Array.prototype.forEach.call(allRows, enforceRowAction);
-  }
+  el('bulkTable')?.querySelector('tbody')?.insertAdjacentHTML('beforeend', bulkRowHtml());
+  Array.from(el('bulkTable')?.querySelectorAll('tbody tr') || []).forEach(enforceRowAction);
 
-  /* === Bulk behaviors === */
-  var bulkAdd = el('bulkAdd');
-  if (bulkAdd){
-    bulkAdd.addEventListener('click', function(){
-      var tb = el('bulkTable') && el('bulkTable').querySelector('tbody');
-      if (!tb) return;
-      tb.insertAdjacentHTML('beforeend', bulkRowHtml());
-      var tr = el('bulkTable').querySelector('tbody tr:last-child');
-      if (tr) enforceRowAction(tr);
-    });
-  }
+  // === Bulk behaviors ===
+  el('bulkAdd')?.addEventListener('click', ()=>{
+    const tb = el('bulkTable')?.querySelector('tbody'); if (!tb) return;
+    tb.insertAdjacentHTML('beforeend', bulkRowHtml());
+    const tr = el('bulkTable').querySelector('tbody tr:last-child');
+    enforceRowAction(tr);
+  });
 
-  if (bulkTable){
-    bulkTable.addEventListener('change', function(e){
-      var tr = e.target.closest ? e.target.closest('tr') : null; if (!tr) return;
+  // Per-row logic
+  el('bulkTable')?.addEventListener('change', async (e)=>{
+    const tr = e.target.closest('tr'); if (!tr) return;
 
-      if (e.target.matches && e.target.matches('[data-field="action"]')){ enforceRowAction(tr); return; }
+    if (e.target.matches('[data-field="action"]')){ enforceRowAction(tr); return; }
 
-      if (e.target.matches && e.target.matches('[data-field="partId"]')){
-        var partId = (e.target.value || '').trim();
-        var rowCat = tr.querySelector('[data-field="company"]');
-        if (partId && rowCat && !rowCat.value){
-          autoCat(partId).then(function(cat){
-            if (cat) rowCat.value = cat;
-            if (!rowCat.value && compInput && compInput.value) rowCat.value = compInput.value;
-          });
-        } else if (rowCat && !rowCat.value && compInput && compInput.value){
-          rowCat.value = compInput.value;
+    // Auto-fill Category when a PartID is chosen
+    if (e.target.matches('[data-field="partId"]')){
+      const partId = (e.target.value || '').trim();
+      const rowCat = tr.querySelector('[data-field="company"]');
+      if (partId && rowCat && !rowCat.value){
+        const cat = await autoCat(partId);
+        if (cat) rowCat.value = cat;
+        if (compInput && !compInput.value && cat) {
+          compInput.value = cat;
+          LS.set(K.company, cat);
         }
       }
-    });
-    bulkTable.addEventListener('click', function(e){
-      if (e.target && e.target.getAttribute('data-action') === 'remove'){
-        var tr = e.target.closest ? e.target.closest('tr') : null;
-        if (tr) tr.remove();
+      if (rowCat && !rowCat.value && compInput && compInput.value){
+        rowCat.value = compInput.value;
       }
-    });
-  }
+    }
+  });
+  el('bulkTable')?.addEventListener('click', (e)=>{
+    if (e.target.dataset.action==='remove'){
+      const tr = e.target.closest('tr'); if (tr) tr.remove();
+    }
+  });
 
   // Submit All
-  var submitting = false;
-  var btnSubmit = el('bulkSubmit');
-  if (btnSubmit){
-    btnSubmit.addEventListener('click', function(){
-      if (submitting) return;
-      var tech = gv('tech');
-      if (!tech){ alert('Technician is required.'); return; }
+  let submitting = false;
+  const btnSubmit = el('bulkSubmit');
+  btnSubmit?.addEventListener('click', async ()=>{
+    if (submitting) return;
+    const tech = gv('tech');
+    if (!tech){ alert('Technician is required.'); return; }
 
-      var rows = Array.prototype.slice.call((el('bulkTable') && el('bulkTable').querySelectorAll('tbody tr')) || []);
-      if (!rows.length){ alert('Add at least one line.'); return; }
+    const rows = Array.from(el('bulkTable')?.querySelectorAll('tbody tr') || []);
+    if (!rows.length){ alert('Add at least one line.'); return; }
 
-      var defaultCat = gv('company');
-      var jobCode = gv('jobCode');
-      var note = gv('note');
+    const defaultCat = gv('company');
+    const note = gv('note');
+    const selJob = getSelectedJob(); // optional; kept out of Sheets write
 
-      var items = rows.map(function(tr){
-        function get(name){ var n = tr.querySelector('[data-field="'+name+'"]'); return n ? n.value : ''; }
-        var action = (get('action') || 'used').toLowerCase();
-        var fromLoc = get('fromLoc');
-        var toLoc   = get('toLoc');
-        var company = (get('company') || defaultCat).trim();
+    const items = rows.map(tr=>{
+      const get = name => { const n = tr.querySelector(`[data-field="${name}"]`); return n ? n.value : ''; };
+      const action = (get('action') || 'used').toLowerCase(); // must be used|received|moved
+      let fromLoc = get('fromLoc');
+      let toLoc   = get('toLoc');
+      const company = (get('company') || defaultCat).trim();
 
-        if (action === 'used'){ if (!fromLoc || fromLoc === 'N/A') fromLoc = ''; toLoc = 'N/A'; }
-        else if (action === 'received'){ if (!toLoc || toLoc === 'N/A') toLoc = ''; fromLoc = 'N/A'; }
-        else { if (fromLoc === 'N/A') fromLoc=''; if (toLoc === 'N/A') toLoc=''; }
-
-        var qty = String(parseFloat(get('qty') || '0') || 0);
-        return {
-          company: company,
-          tech: tech,
-          action: action,
-          partId: (get('partId') || '').trim(),
-          qty: qty,
-          fromLoc: fromLoc,
-          toLoc: toLoc,
-          jobCode: jobCode,
-          note: note,
-          requestId: (window.crypto && crypto.randomUUID ? crypto.randomUUID() : ('r-'+Date.now()+Math.random().toString(16).slice(2)))
-        };
-      }).filter(function(it){ return it.company && it.partId && parseFloat(it.qty) > 0; });
-
-      if (!items.length){ alert('Each row needs Category, PartID and Qty.'); return; }
-      for (var i=0;i<items.length;i++){
-        var it = items[i];
-        if (it.action==='used' && !it.fromLoc){ alert('Row '+it.partId+': select FROM location.'); return; }
-        if (it.action==='received' && !it.toLoc){ alert('Row '+it.partId+': select TO location.'); return; }
-        if (it.action==='moved' && (!it.fromLoc || !it.toLoc)){ alert('Row '+it.partId+': select BOTH From and To.'); return; }
+      if (action === 'used'){
+        if (!fromLoc || fromLoc === 'N/A'){ fromLoc = ''; }
+        toLoc = 'N/A';
+      } else if (action === 'received'){
+        if (!toLoc || toLoc === 'N/A'){ toLoc = ''; }
+        fromLoc = 'N/A';
+      } else {
+        if (fromLoc === 'N/A') fromLoc = '';
+        if (toLoc === 'N/A')   toLoc   = '';
       }
 
-      submitting = true;
-      btnSubmit.disabled = true;
-      submitOrQueue({ kind:'batch', items: JSON.stringify(items) }, 'Parts submitted successfully')
-        .then(function(){
-          items.forEach(function(it){
-            prependRecent(it.company+': '+it.tech+' '+it.action+' '+it.qty+' × '+it.partId+' ('+(it.fromLoc||'—')+'→'+(it.toLoc||'—')+')');
-          });
-          var tb = el('bulkTable') && el('bulkTable').querySelector('tbody');
-          if (tb){
-            tb.innerHTML = '';
-            tb.insertAdjacentHTML('beforeend', bulkRowHtml());
-            var last = el('bulkTable').querySelector('tbody tr:last-child');
-            if (last) enforceRowAction(last);
-          }
-          var noteEl = el('note'); if (noteEl) noteEl.value = '';
-          return flushQueue().then(loadParts).then(loadCats);
-        })
-        .catch(function(e){ alert('Bulk submit failed: '+(e && e.message || e)); })
-        .finally ? (submitting=false, btnSubmit.disabled=false)
-                 : (submitting=false, btnSubmit.disabled=false);
-    });
-  }
+      return {
+        company,
+        tech,
+        action, // canonical
+        partId: (get('partId')||'').trim(),
+        qty: String(parseFloat(get('qty')||'0')||0),
+        fromLoc, toLoc,
+        jobCode: selJob ? selJob.name : '', // still recorded in Movements "JobCode" for context
+        note,
+        requestId: (crypto.randomUUID ? crypto.randomUUID() : 'r-'+Date.now()+Math.random().toString(16).slice(2))
+      };
+    }).filter(it => it.company && it.partId && parseFloat(it.qty)>0);
+
+    if (!items.length){ alert('Each row needs Category, PartID and Qty.'); return; }
+
+    for (const it of items){
+      if (it.action==='used'    && !it.fromLoc){ alert(`Row ${it.partId}: select FROM location.`); return; }
+      if (it.action==='received'&& !it.toLoc){   alert(`Row ${it.partId}: select TO location.`);   return; }
+      if (it.action==='moved'   && (!it.fromLoc || !it.toLoc)){ alert(`Row ${it.partId}: select BOTH From and To.`); return; }
+    }
+
+    submitting = true;
+    btnSubmit.disabled = true;
+    try{
+      await submitOrQueue({ kind:'batch', items: JSON.stringify(items) }, 'Parts submitted successfully');
+      items.forEach(it => prependRecent(`${it.company}: ${it.tech} ${it.action} ${it.qty} × ${it.partId} (${it.fromLoc||'—'}→${it.toLoc||'—'})`));
+      // reset form
+      const tb = el('bulkTable')?.querySelector('tbody');
+      if (tb){
+        tb.innerHTML = '';
+        tb.insertAdjacentHTML('beforeend', bulkRowHtml());
+        enforceRowAction(el('bulkTable').querySelector('tbody tr:last-child'));
+      }
+      if (el('note')) el('note').value = '';
+      await flushQueue();
+      await loadParts();
+      await loadCats();
+    }catch(e){
+      alert('Bulk submit failed: '+e.message);
+    }finally{
+      submitting = false;
+      btnSubmit.disabled = false;
+    }
+  });
 
   /* ======================== TOOLS: COUNT ======================== */
-  var btnCount = el('btnCount'); if (btnCount) btnCount.addEventListener('click', function(){ openPanel('panelCount'); var n=el('countPartId'); if(n) n.focus(); });
-  var btnCloseCount = el('btnCloseCount'); if (btnCloseCount) btnCloseCount.addEventListener('click', function(){ closePanel('panelCount'); });
-  var countPartId = el('countPartId'); if (countPartId) countPartId.addEventListener('change', loadCountPart);
-  var btnSaveCounts = el('btnSaveCounts'); if (btnSaveCounts) btnSaveCounts.addEventListener('click', function(){
-    var partId = gv('countPartId');
-    var tech   = gv('tech');
-    var companyPromise = lastCountCat ? Promise.resolve(lastCountCat) : autoCat(partId);
-    companyPromise.then(function(company){
-      if (!company || !partId || !tech){ alert('PartID, Category, and Tech required.'); return; }
-      var inputs = (el('countTable') && el('countTable').querySelectorAll('input[data-loc]')) || [];
-      inputs = Array.prototype.slice.call(inputs);
-      var rows = inputs.map(function(inp){ return { locId: inp.getAttribute('data-loc'), qty: Number(inp.value || 0) }; });
-      var payload = { kind:'count', company:company, tech:tech, partId:partId, counts: JSON.stringify(rows), note: gv('note'), jobCode: gv('jobCode') };
-      submitOrQueue(payload, 'Counts saved').then(function(){
-        prependRecent(tech+' counted '+partId+' ('+company+')');
-        closePanel('panelCount');
-      }).catch(function(e){ alert('Save failed: '+(e && e.message || e)); });
-    });
+  el('btnCount')?.addEventListener('click', ()=>{
+    openPanel('panelCount');
+    el('countPartId')?.focus();
+  });
+  el('btnCloseCount')?.addEventListener('click', ()=> closePanel('panelCount'));
+  el('countPartId')?.addEventListener('change', loadCountPart);
+  el('btnSaveCounts')?.addEventListener('click', async ()=>{
+    const partId  = gv('countPartId');
+    const tech    = gv('tech');
+    const company = lastCountCat || await autoCat(partId);
+    if (!company || !partId || !tech) { alert('PartID, Category, and Tech required.'); return; }
+    const inputs = Array.from(el('countTable')?.querySelectorAll('input[data-loc]') || []);
+    const rows = inputs.map(inp => ({ locId: inp.dataset.loc, qty: Number(inp.value || 0) }));
+    const payload = { kind:'count', company, tech, partId, counts: JSON.stringify(rows), note: gv('note') };
+    try {
+      await submitOrQueue(payload, 'Counts saved');
+      prependRecent(`${tech} counted ${partId} (${company})`);
+      closePanel('panelCount');
+    } catch (e) { alert('Save failed: ' + e.message); }
   });
 
   /* ====================== TOOLS: BACKORDER ====================== */
-  var btnBackorder = el('btnBackorder'); if (btnBackorder) btnBackorder.addEventListener('click', function(){
+  el('btnBackorder')?.addEventListener('click', ()=>{
     openPanel('panelBackorder');
-    var topCat = gv('company'); if (topCat) { var boc = el('boCategory'); if (boc) boc.value = topCat; }
-    var bop = el('boPartId'); if (bop) bop.focus();
+    const topCat = gv('company'); if (topCat) el('boCategory').value = topCat;
+    el('boPartId')?.focus();
   });
-  var btnCloseBackorder = el('btnCloseBackorder'); if (btnCloseBackorder) btnCloseBackorder.addEventListener('click', function(){ closePanel('panelBackorder'); });
-  var boPartId = el('boPartId'); if (boPartId) boPartId.addEventListener('change', function(e){
-    var pid = (e.target.value || '').trim(); if (!pid) return;
-    autoCat(pid).then(function(cat){ var boc=el('boCategory'); if (cat && boc && !boc.value) boc.value = cat; });
+  el('btnCloseBackorder')?.addEventListener('click', ()=> closePanel('panelBackorder'));
+  el('boPartId')?.addEventListener('change', async (e)=>{
+    const pid = (e.target.value||'').trim();
+    if (!pid) return;
+    const cat = await autoCat(pid);
+    if (cat && el('boCategory') && !el('boCategory').value) el('boCategory').value = cat;
   });
-  var btnSubmitBackorder = el('btnSubmitBackorder'); if (btnSubmitBackorder) btnSubmitBackorder.addEventListener('click', function(){
-    var partId = gv('boPartId');
-    var company = gv('boCategory');
-    var qtyStr = gv('boQty') || '1';
-    var expected = gv('boExpected') ? String(Date.parse(gv('boExpected'))) : '';
-    var note = gv('boNote');
+  el('btnSubmitBackorder')?.addEventListener('click', async ()=>{
+    const partId = gv('boPartId');
+    let company = gv('boCategory');
+    const qtyStr = gv('boQty') || '1';
+    const expected = gv('boExpected') ? String(Date.parse(gv('boExpected'))) : '';
+    const note = gv('boNote');
     if (!partId){ alert('PartID required.'); return; }
-    var getCompany = company ? Promise.resolve(company) : autoCat(partId);
-    getCompany.then(function(c){
-      if (!c){ alert('Category required.'); return; }
-      var payload = {
-        kind:'backorder',
-        company:c, partId:partId,
-        qty:String(parseFloat(qtyStr)||0),
-        requestedBy: gv('tech'),
-        expectedDate: expected,
-        note: note,
-        requestId: (window.crypto && crypto.randomUUID ? crypto.randomUUID() : ('bo-'+Date.now()))
-      };
-      submitOrQueue(payload, 'Backorder submitted').then(function(){
-        prependRecent('backorder '+payload.qty+' × '+payload.partId+' ('+c+')');
-        closePanel('panelBackorder');
-        var q=el('boQty'); if(q) q.value='';
-        var ex=el('boExpected'); if(ex) ex.value='';
-        var no=el('boNote'); if(no) no.value='';
-      }).catch(function(e){ alert('Backorder failed: '+(e && e.message || e)); });
-    });
+    if (!company){ company = await autoCat(partId); }
+    if (!company){ alert('Category required.'); return; }
+    const payload = {
+      kind: 'backorder',
+      company,
+      partId,
+      qty: String(parseFloat(qtyStr) || 0),
+      requestedBy: gv('tech'),
+      expectedDate: expected,
+      note,
+      requestId: (crypto.randomUUID ? crypto.randomUUID() : 'bo-' + Date.now()),
+    };
+    try{
+      await submitOrQueue(payload, 'Backorder submitted');
+      prependRecent(`backorder ${payload.qty} × ${payload.partId} (${company})`);
+      closePanel('panelBackorder');
+      if (el('boQty')) el('boQty').value = '';
+      if (el('boExpected')) el('boExpected').value = '';
+      if (el('boNote')) el('boNote').value = '';
+    }catch(e){
+      alert('Backorder failed: '+e.message);
+    }
   });
 
   /* ======================= TOOLS: HISTORY ======================= */
-  var btnHistory = el('btnHistory'); if (btnHistory) btnHistory.addEventListener('click', function(){ openPanel('panelHistory'); loadTechs().then(function(){ showHistFields(gv('histFilter') || 'tech'); }); });
-  var historyClose = el('historyClose'); if (historyClose) historyClose.addEventListener('click', function(){ closePanel('panelHistory'); });
-  var histFilter = el('histFilter'); if (histFilter) histFilter.addEventListener('change', function(e){ showHistFields(e.target.value); });
-  var historyLoad = el('historyLoad'); if (historyLoad) historyLoad.addEventListener('click', function(){
-    var by = gv('histFilter') || 'tech';
-    var limit = String(parseInt(gv('historyLimit') || '100'));
-    var params = { limit: limit };
+  el('btnHistory')?.addEventListener('click', async ()=>{
+    openPanel('panelHistory');
+    await loadTechs();
+    showHistFields(gv('histFilter') || 'tech');
+  });
+  el('historyClose')?.addEventListener('click', ()=> closePanel('panelHistory'));
+  el('histFilter')?.addEventListener('change', (e)=> showHistFields(e.target.value));
+  el('historyLoad')?.addEventListener('click', async ()=>{
+    const by = gv('histFilter') || 'tech';
+    const limit = String(parseInt(gv('historyLimit') || '100'));
+    const params = { limit };
     if (by === 'tech') params.tech = gv('historyTech');
     if (by === 'daterange') { params.start = gv('historyStart'); params.end = gv('historyEnd'); }
     if (by === 'category') params.category = gv('historyCategory');
     if (by === 'part')     params.partId   = gv('historyPart');
-    if (by === 'job')      params.jobCode  = gv('historyJob');
-    var p = (by === 'tech' && !params.start && !params.category && !params.partId && !params.jobCode)
-      ? apiGET('history', { tech: params.tech, limit: params.limit })
-      : apiGET('historysearch', params);
-    p.then(function(j){ renderHistory(j.items || []); })
-     .catch(function(e){ alert('Failed to load history: '+(e && e.message || e)); });
+    if (by === 'job')      params.jobCode  = gv('historyJob'); // purely textual filter in Sheets
+    try{
+      let j;
+      if (by === 'tech' && !params.start && !params.category && !params.partId && !params.jobCode){
+        j = await apiGET('history', { tech: params.tech, limit: params.limit });
+      } else {
+        j = await apiGET('historysearch', params);
+      }
+      renderHistory(j.items||[]);
+    }catch(e){
+      alert('Failed to load history: '+e.message);
+    }
   });
-  var historyList = el('historyList'); if (historyList) historyList.addEventListener('click', function(e){
-    var editId = e.target && e.target.getAttribute('data-edit');
-    var voidId = e.target && e.target.getAttribute('data-void');
+  el('historyList')?.addEventListener('click', async (e)=>{
+    const editId = e.target.dataset.edit;
+    const voidId = e.target.dataset.void;
     if (!editId && !voidId) return;
-    var li = e.target.closest ? e.target.closest('li') : null;
-    var whenStr = li ? (li.querySelector('strong') ? li.querySelector('strong').textContent : '') : '';
+    const li = e.target.closest('li');
+    const whenStr = li ? (li.querySelector('strong')?.textContent || '') : '';
     if (voidId){
       if (!confirmDelete(whenStr)) return;
-      submitOrQueue({ kind:'void', requestId:voidId, tech:gv('tech') }, 'Submission voided')
-        .then(function(){ var btn=el('historyLoad'); if (btn) btn.click(); })
-        .catch(function(err){ alert('Delete failed: '+(err && err.message || err)); });
+      try{
+        await submitOrQueue({ kind:'void', requestId: voidId, tech: gv('tech') }, 'Submission voided');
+        el('historyLoad')?.click();
+      }catch(err){ alert('Delete failed: '+err.message); }
       return;
     }
     if (editId){
       if (!confirmChange(whenStr)) return;
-      var a = prompt('Action (used, received, moved):', 'used'); if (!a) return;
-      var action = a.trim().toLowerCase();
-      if (['used','received','moved'].indexOf(action) < 0) return alert('Invalid action.');
-      var fromLoc = '', toLoc = '';
-      if (action==='used'){ fromLoc = (prompt('From location (required):','')||'').trim(); toLoc = 'N/A'; }
-      else if (action==='received'){ fromLoc = 'N/A'; toLoc = (prompt('To location (required):','')||'').trim(); }
-      else { fromLoc = (prompt('From location (required):','')||'').trim(); toLoc = (prompt('To location (required):','')||'').trim(); }
-      var q = prompt('Quantity:', '1'); if (q===null) return;
-      var qty = q.trim();
-      var n = prompt('Note (optional):',''); var note = n ? n.trim() : '';
-      submitOrQueue({ kind:'edit', requestId:editId, tech:gv('tech'),
-        action:action, fromLoc:fromLoc, toLoc:toLoc, qty:qty, note:note, jobCode:gv('jobCode') }, 'Submission corrected')
-        .then(function(){ var btn=el('historyLoad'); if (btn) btn.click(); })
-        .catch(function(err){ alert('Edit failed: '+(err && err.message || err)); });
+      const a = prompt('Action (used, received, moved):','used');
+      const action = a ? a.trim().toLowerCase() : '';
+      if (!action || !['used','received','moved'].includes(action)) return alert('Invalid action.');
+      let fromLoc = '', toLoc = '';
+      if (action==='used'){
+        const f = prompt('From location (required):',''); fromLoc = f ? f.trim() : '';
+        toLoc = 'N/A';
+      } else if (action==='received'){
+        fromLoc = 'N/A';
+        const t = prompt('To location (required):',''); toLoc = t ? t.trim() : '';
+      } else {
+        const f = prompt('From location (required):',''); fromLoc = f ? f.trim() : '';
+        const t = prompt('To location (required):','');   toLoc   = t ? t.trim() : '';
+      }
+      const q = prompt('Quantity:', '1'); if (q === null) return;
+      const qty = q.trim();
+      const n = prompt('Note (optional):','');
+      const note = n ? n.trim() : '';
+      try{
+        await submitOrQueue({ kind:'edit',
+          requestId: editId,
+          tech: gv('tech'),
+          action, fromLoc, toLoc, qty, note,
+        }, 'Submission corrected');
+        el('historyLoad')?.click();
+      }catch(err){ alert('Edit failed: '+err.message); }
     }
   });
 
   /* ======================= NOTION BUTTONS ======================= */
-  var btnLookup = el('btnLookupTask');
-  var btnLogged = el('btnMarkLogged');
+  const btnLookup = el('btnLookupTask');
+  const btnLogged = el('btnMarkLogged');
 
-  if (btnLookup){
-    btnLookup.addEventListener('click', function(){
-      var code = gv('jobCode');
-      if (!code){ alert('Enter a Job Code first.'); return; }
-      notionLookupByJobCode(code).then(function(res){
-        if (res && res.ok && res.found && res.task){
-          var t = res.task;
-          el('taskName').textContent = t.name || '(Untitled)';
-          el('taskOpen').href = t.url || '#';
-          el('taskJobCode').textContent = t.jobCode || code;
-          el('taskPartsStatus').textContent = t.partsStatus || '—';
-          el('taskDue').textContent = t.due ? new Date(t.due).toLocaleDateString() : '—';
-          el('taskCard').style.display = 'block';
-          toast('Task loaded from Notion');
-        } else {
-          el('taskCard').style.display = 'none';
-          toast('No task found for that Job Code');
+  btnLookup && btnLookup.addEventListener('click', async ()=>{
+    const job = findJobByName((el('job')?.value || el('jobName')?.value || el('jobCode')?.value || '').trim());
+    const selected = job || getSelectedJob();
+    if (!selected){ alert('Pick a Job first. Start typing the job name and select it.'); return; }
+    try{
+      const res = await notionLookupByPageId(selected.id);
+      if (res && res.ok && res.found && res.task){
+        const t = res.task;
+        // Fill card (works even if your HTML still has 'taskJobCode')
+        el('taskName') && (el('taskName').textContent = t.name || '(Untitled)');
+        el('taskOpen') && (el('taskOpen').href = t.url || '#');
+        el('taskJobCode') && (el('taskJobCode').textContent = t.name || '—'); // repurpose field label
+        el('taskPartsStatus') && (el('taskPartsStatus').textContent = t.partsStatus || '—');
+        el('taskDue') && (el('taskDue').textContent = t.due ? new Date(t.due).toLocaleDateString() : '—');
+        el('taskCard') && (el('taskCard').style.display = 'block');
+        setSelectedJob({ id: selected.id, name: t.name || selected.name });
+        toast('Task loaded from Notion');
+      } else {
+        el('taskCard') && (el('taskCard').style.display = 'none');
+        toast('No task found');
+      }
+    }catch(e){
+      alert('Lookup failed: ' + (e?.message || e));
+    }
+  });
+
+  btnLogged && btnLogged.addEventListener('click', async ()=>{
+    const selected = findJobByName((el('job')?.value || el('jobName')?.value || '').trim()) || getSelectedJob();
+    if (!selected){ alert('Pick a Job first.'); return; }
+    try{
+      const res = await notionMarkPartsLogged(selected.id, 'Parts Logged');
+      if (res && res.ok){
+        toast('Parts Status updated in Notion');
+        const again = await notionLookupByPageId(selected.id);
+        if (again?.task){
+          el('taskPartsStatus') && (el('taskPartsStatus').textContent = again.task.partsStatus || 'Parts Logged');
+          el('taskCard') && (el('taskCard').style.display = 'block');
         }
-      }).catch(function(e){
-        alert('Lookup failed: ' + (e && e.message || e));
-      });
-    });
-  }
-  if (btnLogged){
-    btnLogged.addEventListener('click', function(){
-      var code = gv('jobCode');
-      if (!code){ alert('Enter a Job Code first.'); return; }
-      notionMarkPartsLogged(code, 'Parts Logged').then(function(res){
-        if (res && res.ok){
-          toast('Parts Status updated in Notion');
-          return notionLookupByJobCode(code).then(function(again){
-            if (again && again.task){
-              el('taskPartsStatus').textContent = again.task.partsStatus || 'Parts Logged';
-              el('taskCard').style.display = 'block';
-            }
-          });
-        } else {
-          alert('Update failed: ' + (res && res.error || 'unknown'));
-        }
-      }).catch(function(e){
-        alert('Update failed: ' + (e && e.message || e));
-      });
-    });
-  }
-});
+      } else {
+        alert('Update failed: ' + (res?.error || 'unknown'));
+      }
+    }catch(e){
+      alert('Update failed: ' + (e?.message || e));
+    }
+  });
+
+}); // end DOMContentLoaded

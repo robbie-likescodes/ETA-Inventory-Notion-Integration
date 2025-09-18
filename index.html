@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tech Inventory</title>
-  <link rel="stylesheet" href="styles.css?v=20250917-1515">
+  <link rel="stylesheet" href="styles.css?v=20250918-1">
   <meta name="theme-color" content="#0b0b0f">
 </head>
 <body>
@@ -30,31 +30,46 @@
       <!-- Identity / Job -->
       <section class="card">
         <div class="row">
-          <label>Job Code
-            <input id="jobCode" placeholder="e.g. ETA-509" />
+          <!-- NEW: Notion Job picker (searchable via datalist) -->
+          <label>Job
+            <input id="jobSearch" list="jobsList" placeholder="Type to search jobs…" autocomplete="off" />
+            <input id="jobPageId" type="hidden" />
           </label>
+
           <label>Technician
             <input id="tech" placeholder="Your name" />
           </label>
         </div>
 
-        <!-- Notion quick actions -->
-        <div class="split" style="margin-top:6px">
+        <!-- Optional: legacy job-code entry -->
+        <details style="margin-top:6px">
+          <summary class="small muted">Legacy: enter a Job Code instead</summary>
+          <div class="row" style="margin-top:6px">
+            <label>Job Code
+              <input id="jobCode" placeholder="e.g. ETA-509" />
+            </label>
+            <div class="small muted" style="align-self:flex-end">If you don’t use Job Codes, ignore this.</div>
+          </div>
+        </details>
+
+        <!-- Notion actions -->
+        <div class="split" style="margin-top:8px">
           <div class="small muted">
-            Use Job Code to fetch the task from Notion and update Parts Status after submitting parts.
+            Pick a Job above to load details from Notion. After submitting parts, you can mark the job’s “Parts Status”.
           </div>
           <div class="inline">
-            <button id="btnLookupTask" type="button">Lookup Task in Notion</button>
-            <button id="btnMarkLogged" type="button" class="small">Mark Parts Logged</button>
+            <button id="btnLookupTask" type="button" title="Refresh the selected job from Notion">Refresh Job</button>
+            <button id="btnMarkLogged" type="button" class="small" title="Set Parts Status to 'Parts Logged'">Mark Parts Logged</button>
           </div>
         </div>
 
-        <!-- Notion Task Card -->
+        <!-- Notion Job Card -->
         <div id="taskCard" class="card" style="margin-top:10px; display:none">
           <div class="split">
-            <strong id="taskName">(Task)</strong>
+            <strong id="taskName">(Job)</strong>
             <a id="taskOpen" href="#" target="_blank" rel="noopener" class="small muted">Open in Notion ↗</a>
           </div>
+
           <div class="row" style="margin-top:6px">
             <div style="flex:1">
               <div class="small muted">Job Code</div>
@@ -67,6 +82,22 @@
             <div style="flex:1">
               <div class="small muted">Due</div>
               <div id="taskDue">—</div>
+            </div>
+          </div>
+
+          <!-- NEW: extra job context -->
+          <div class="row" style="margin-top:6px">
+            <div style="flex:1">
+              <div class="small muted">Client</div>
+              <div id="jobClient">—</div>
+            </div>
+            <div style="flex:2">
+              <div class="small muted">Address</div>
+              <div id="jobAddress">—</div>
+            </div>
+            <div style="flex:1">
+              <div class="small muted">Status</div>
+              <div id="jobStatus">—</div>
             </div>
           </div>
         </div>
@@ -239,11 +270,146 @@
   <!-- Datalists -->
   <datalist id="partsList"></datalist>
   <datalist id="catsList"></datalist>
+  <!-- NEW: jobs list for the Notion job picker -->
+  <datalist id="jobsList"></datalist>
 
   <!-- Toast -->
   <div class="toast" role="status" aria-live="polite"></div>
 
   <!-- App JS (with cache-buster) -->
-  <script src="app.js?v=20250917-1515"></script>
+  <script src="app.js?v=20250918-1"></script>
+
+  <!-- Minimal glue to keep buttons functional even before app.js is updated.
+       Your app.js can override/augment these behaviors. -->
+  <script>
+    (function () {
+      const $ = (id) => document.getElementById(id);
+
+      // Show/hide the job card with extra fields
+      function showJobCard(job) {
+        const card = $('taskCard');
+        if (!job) { card.style.display = 'none'; return; }
+        $('taskName').textContent = job.title || job.name || '(Untitled)';
+        $('taskOpen').href = job.url || '#';
+        $('taskJobCode').textContent = job.jobCode || '—';
+        $('taskPartsStatus').textContent = job.partsStatus || '—';
+        $('taskDue').textContent = job.due ? new Date(job.due).toLocaleDateString() : '—';
+        $('jobClient').textContent = job.client || '—';
+        $('jobAddress').textContent = job.address || '—';
+        $('jobStatus').textContent = job.status || '—';
+        card.style.display = 'block';
+      }
+
+      // Helper: base URL & key from existing globals or localStorage
+      function cfg() {
+        const u = window.API_URL || localStorage.getItem('API_URL') || '';
+        const k = window.API_KEY || localStorage.getItem('API_KEY') || '';
+        return { url: u, key: k };
+      }
+      async function apiGet(params) {
+        const { url } = cfg();
+        const qs = new URLSearchParams(params).toString();
+        const res = await fetch(url + '?' + qs, { method: 'GET' });
+        return res.json();
+      }
+      async function apiPost(body) {
+        const { url, key } = cfg();
+        const form = new URLSearchParams({ api_key: key });
+        Object.keys(body || {}).forEach(k => form.append(k, body[k]));
+        const res = await fetch(url, { method: 'POST', body: form });
+        return res.json();
+      }
+
+      /* ----------- Populate the Job picker ----------- */
+      const jobInput = $('jobSearch');
+      const jobsList = $('jobsList');
+      const jobPageId = $('jobPageId');
+
+      async function refreshJobs(q='') {
+        try {
+          const j = await apiGet({ route: 'jobs', q, limit: 100 });
+          jobsList.innerHTML = '';
+          (j.jobs || []).forEach(job => {
+            const opt = document.createElement('option');
+            opt.value = job.title || '(Untitled)';
+            opt.dataset.id = job.id;
+            opt.label = [job.client, job.status].filter(Boolean).join(' • ');
+            jobsList.appendChild(opt);
+          });
+        } catch (e) {
+          // silent – app.js may show a toast already
+        }
+      }
+      jobInput.addEventListener('input', () => refreshJobs(jobInput.value.trim()));
+      jobInput.addEventListener('focus', () => refreshJobs(jobInput.value.trim()));
+
+      // When the user confirms a choice, resolve to a pageId and load details
+      jobInput.addEventListener('change', async () => {
+        const match = Array.from(jobsList.options).find(o => o.value === jobInput.value);
+        if (!match) return;
+        jobPageId.value = match.dataset.id || '';
+        if (!jobPageId.value) return;
+
+        try {
+          const j = await apiGet({ route: 'job', id: jobPageId.value });
+          if (j && j.ok && j.job) {
+            showJobCard(j.job);
+          }
+        } catch (e) {}
+      });
+
+      /* ----------- Buttons: Refresh & Mark Logged ----------- */
+      $('btnLookupTask')?.addEventListener('click', async () => {
+        const pid = jobPageId.value.trim();
+        const legacy = $('jobCode').value.trim();
+        try {
+          if (pid) {
+            const j = await apiGet({ route: 'job', id: pid });
+            if (j.ok && j.job) showJobCard(j.job);
+          } else if (legacy) {
+            // Fallback to legacy job-code lookup if app.js exposes it
+            if (window.notionLookupByJobCode) {
+              const res = await window.notionLookupByJobCode(legacy);
+              if (res && res.task) showJobCard(res.task);
+            } else {
+              const res = await apiPost({ kind: 'lookup', jobCode: legacy });
+              if (res.ok && res.task) showJobCard(res.task);
+            }
+          } else {
+            alert('Pick a Job (or enter a Job Code) first.');
+          }
+        } catch (e) {
+          alert('Lookup failed: ' + (e?.message || e));
+        }
+      });
+
+      $('btnMarkLogged')?.addEventListener('click', async () => {
+        const pid = jobPageId.value.trim();
+        const legacy = $('jobCode').value.trim();
+        try {
+          let res;
+          if (pid) {
+            res = await apiPost({ kind: 'mark_parts', pageId: pid, partsStatus: 'Parts Logged' });
+          } else if (legacy) {
+            res = await apiPost({ kind: 'mark_parts', jobCode: legacy, partsStatus: 'Parts Logged' });
+          } else {
+            alert('Pick a Job (or enter a Job Code) first.');
+            return;
+          }
+          if (res && res.ok) {
+            // refresh card
+            if (pid) {
+              const j = await apiGet({ route: 'job', id: pid });
+              if (j.ok && j.job) showJobCard(j.job);
+            }
+          } else {
+            alert('Update failed: ' + (res?.error || 'unknown'));
+          }
+        } catch (e) {
+          alert('Update failed: ' + (e?.message || e));
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
